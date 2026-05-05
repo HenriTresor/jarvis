@@ -1,1 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 .venv
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+chroma_db/
+vector_store/
+
+# Audio/Video cache
+*.wav
+*.mp3
+*.mp4
+cache/
+temp/
+
+# API keys and secrets
+.env
+.env.local
+.env.production
+secrets.json
+
+# Model files (large, download separately)
+models/
+ollama_models/
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Node.js (if any frontend)
+node_modules/
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
