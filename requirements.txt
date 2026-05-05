@@ -1,0 +1,50 @@
+# J.A.R.V.I.S. Requirements
+# All dependencies for the complete local AI assistant
+# Install with: pip install -r requirements.txt
+
+# Voice Pipeline (Wake Word, STT, TTS)
+openwakeword==0.6.0
+faster-whisper==1.0.1
+TTS==0.22.0
+sounddevice==0.4.6
+pyaudio==0.2.14
+scipy==1.13.0
+numpy==1.26.0
+
+# Brain (LLM Client)
+ollama==0.3.0
+
+# Memory (Vector DB + Structured Facts)
+chromadb==0.5.0
+sentence-transformers==3.0.0
+sqlite3  # Built into Python 3.6+
+
+# Agent & Tools (Web Search, Weather, etc.)
+duckduckgo-search==6.2.0
+requests==2.32.0
+python-dotenv==1.0.0
+
+# Vision (Image Analysis, Motion Detection)
+opencv-python==4.10.0.84
+Pillow==10.4.0
+
+# API Backend (FastAPI + WebSocket)
+fastapi==0.112.0
+uvicorn==0.30.0
+pydantic==2.8.0
+
+# Optional: Google APIs (Gmail, Calendar)
+# Uncomment if you want email/calendar integration
+# google-auth==2.32.0
+# google-auth-oauthlib==1.2.0
+# google-api-python-client==2.139.0
+
+# Optional: Task Queue (Celery + Redis)
+# Uncomment if you want background task processing
+# celery==5.4.0
+# redis==5.0.8
+
+# Development/Testing
+# pytest==8.2.0
+# black==24.4.0
+# flake8==7.0.0
