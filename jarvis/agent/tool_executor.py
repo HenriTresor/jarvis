@@ -15,6 +15,9 @@ from typing import Any, Dict, Optional
 import base64
 from pathlib import Path
 
+# Import vision module for actual vision capabilities
+from jarvis.vision.vision_module import VisionModule
+
 
 class ToolExecutor:
     """
@@ -51,6 +54,9 @@ class ToolExecutor:
         try:
             self.ha_url: Optional[str] = home_assistant_url
             self.ha_token: Optional[str] = ha_token
+
+            # Initialize vision module for camera/image analysis
+            self.vision: VisionModule = VisionModule(camera_index=0)
 
             if self.ha_url:
                 print(f"[ToolExecutor] Home Assistant configured: {self.ha_url}")
@@ -526,9 +532,12 @@ class ToolExecutor:
         """
         try:
             print(f"[ToolExecutor] Capturing image from webcam...")
-            # Vision integration would go here
-            # For now, return simulated response
-            return "[SIMULATED] Image captured and saved"
+            # Use actual vision module
+            image_path: str = self.vision.capture_image()
+            if image_path:
+                return f"Image captured and saved to: {image_path}"
+            else:
+                return "Error: Failed to capture image"
         except Exception as e:
             print(f"[ToolExecutor] Error in _capture_image: {e}")
             return f"Image capture error: {e}"
@@ -549,9 +558,21 @@ class ToolExecutor:
                 return "Error: No image path provided"
 
             print(f"[ToolExecutor] Analyzing image: {image_path}")
-            # Vision integration would go here
-            # For now, return simulated response
-            return "[SIMULATED] Image contains a desk with a computer"
+
+            # Use actual vision module
+            if image_path.lower() == "camera":
+                # Capture from camera first
+                captured_path: Optional[str] = self.vision.capture_image()
+                if not captured_path:
+                    return "Error: Failed to capture image from camera"
+                image_path = captured_path
+
+            # Use default prompt if none provided
+            if not prompt:
+                prompt = "Describe what you see in this image in detail."
+
+            description: str = self.vision.analyze_image_file(image_path, prompt)
+            return description
         except Exception as e:
             print(f"[ToolExecutor] Error in _describe_image: {e}")
             return f"Image analysis error: {e}"
@@ -565,9 +586,12 @@ class ToolExecutor:
         """
         try:
             print(f"[ToolExecutor] Detecting motion...")
-            # Vision integration would go here
-            # For now, return simulated response
-            return "[SIMULATED] No motion detected"
+            # Use actual vision module
+            motion_detected: bool = self.vision.detect_motion()
+            if motion_detected:
+                return "Motion detected on camera"
+            else:
+                return "No motion detected"
         except Exception as e:
             print(f"[ToolExecutor] Error in _detect_motion: {e}")
             return f"Motion detection error: {e}"
