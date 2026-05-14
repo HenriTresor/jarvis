@@ -69,8 +69,18 @@ class VisionModule:
             print(f"[Vision] Initializing vision module (model: {self.MODEL})")
 
             # Verify LLaVA is available
-            models: list = ollama.list()
-            model_names: list = [m["name"].split(":")[0] for m in models]
+            models_resp = ollama.list()
+            if isinstance(models_resp, dict):
+                model_list = models_resp.get('models', [])
+            else:
+                model_list = getattr(models_resp, 'models', []) or []
+            model_names: list = []
+            for m in model_list:
+                if isinstance(m, dict):
+                    name = m.get('name', '') or m.get('model', '')
+                else:
+                    name = getattr(m, 'model', '') or getattr(m, 'name', '')
+                model_names.append(name.split(':')[0])
 
             if "llava" not in model_names:
                 print(f"[Vision] Warning: LLaVA not found in Ollama models")
@@ -338,9 +348,7 @@ class VisionModule:
             gray: np.ndarray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
 
             # Threshold
-            _, thresh: np.ndarray = cv2.threshold(
-                gray, 25, 255, cv2.THRESH_BINARY
-            )
+            _, thresh = cv2.threshold(gray, 25, 255, cv2.THRESH_BINARY)
 
             # Count non-zero pixels (motion area)
             motion_area: int = cv2.countNonZero(thresh)

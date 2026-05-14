@@ -8,13 +8,17 @@ Two-layer memory system:
 No external API calls. All data stored locally.
 """
 
+import os
 import chromadb
 import sqlite3
 import json
 import uuid
 from datetime import datetime
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from typing import List, Dict, Optional
+
+load_dotenv()
 
 
 class MemoryManager:
@@ -54,7 +58,8 @@ class MemoryManager:
         context = memory.build_context("remind me of something")
     """
 
-    def __init__(self, db_path: str = "./jarvis_memory") -> None:
+    def __init__(self, db_path: str = "") -> None:
+        db_path = db_path or os.getenv("JARVIS_MEMORY_PATH", "./jarvis_memory")
         """
         Initialize the memory system.
 
@@ -77,7 +82,7 @@ class MemoryManager:
             )
             self.collection = self.chroma.get_or_create_collection(
                 name="conversations",
-                metadata={"heuristic": "cosine"}
+                metadata={"hnsw:space": "cosine"}
             )
             print(f"[Memory] ChromaDB collection initialized.")
 

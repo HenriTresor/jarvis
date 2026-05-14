@@ -17,10 +17,13 @@ import threading
 import uvicorn
 import argparse
 import time
+import os
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from jarvis.agent.agent import JarvisAgent
-from jarvis.voice.pipeline import VoicePipeline
 from jarvis.api.server import app
 
 
@@ -35,13 +38,10 @@ def start_api() -> None:
         None
     """
     try:
-        print(f"[Run] Starting API server on http://localhost:8000")
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=8000,
-            log_level="warning"
-        )
+        host = os.getenv("JARVIS_HOST", "0.0.0.0")
+        port = int(os.getenv("JARVIS_PORT", "8000"))
+        print(f"[Run] Starting API server on http://localhost:{port}")
+        uvicorn.run(app, host=host, port=port, log_level="warning")
     except Exception as e:
         print(f"[Run] Error starting API server: {e}")
 
@@ -90,7 +90,7 @@ def text_mode(agent: JarvisAgent) -> None:
         print(f"[Run] Error in text_mode: {e}")
 
 
-def voice_mode(agent: JarvisAgent) -> None:
+def voice_mode(agent: JarvisAgent, speaker_wav: Optional[str] = None) -> None:
     """
     Run Jarvis in voice mode (full voice pipeline).
 
@@ -114,8 +114,12 @@ def voice_mode(agent: JarvisAgent) -> None:
         print(f"[Run] Press Ctrl+C to stop.")
         print(f"[Run] ===================================================")
 
-        # Create voice pipeline with agent as brain
-        pipeline: VoicePipeline = VoicePipeline(brain_callback=agent.think)
+        # Lazy import — only load audio deps when actually entering voice mode
+        from jarvis.voice.pipeline import VoicePipeline
+        pipeline: VoicePipeline = VoicePipeline(
+            brain_callback=agent.think,
+            speaker_wav=speaker_wav
+        )
 
         # Start the pipeline (blocking call)
         pipeline.start()
@@ -190,9 +194,18 @@ def main() -> None:
 
         args: argparse.Namespace = parser.parse_args()
 
+        # CLI args override env vars
+        location: str = args.location or os.getenv("LOCATION", "Kigali, Rwanda")
+        ha_url: Optional[str] = args.ha_url or os.getenv("HOME_ASSISTANT_URL") or None
+        ha_token: Optional[str] = args.ha_token or os.getenv("HOME_ASSISTANT_TOKEN") or None
+        speaker_wav: Optional[str] = os.getenv("SPEAKER_WAV") or None
+        port: int = int(os.getenv("JARVIS_PORT", "8000"))
+
         print(f"[Run] ===== J.A.R.V.I.S. v1.0.0 =====")
         print(f"[Run] Mode: {args.mode}")
-        print(f"[Run] Location: {args.location}")
+        print(f"[Run] Location: {location}")
+        if speaker_wav:
+            print(f"[Run] Voice cloning: {speaker_wav}")
 
         # Start API server in background thread
         api_thread: threading.Thread = threading.Thread(
@@ -210,9 +223,9 @@ def main() -> None:
             try:
                 print(f"[Run] Initializing JarvisAgent...")
                 agent = JarvisAgent(
-                    home_assistant_url=args.ha_url,
-                    ha_token=args.ha_token,
-                    location=args.location
+                    home_assistant_url=ha_url,
+                    ha_token=ha_token,
+                    location=location
                 )
                 print(f"[Run] Agent ready.")
             except Exception as e:
@@ -224,7 +237,7 @@ def main() -> None:
         if args.mode == "text":
             text_mode(agent)
         elif args.mode == "voice":
-            voice_mode(agent)
+            voice_mode(agent, speaker_wav=speaker_wav)
         elif args.mode == "api":
             api_mode()
 

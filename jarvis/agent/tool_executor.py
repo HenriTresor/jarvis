@@ -9,14 +9,14 @@ import json
 import subprocess
 import os
 import requests
+import base64
 from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
 from duckduckgo_search import DDGS
 from typing import Any, Dict, Optional
-import base64
-from pathlib import Path
 
-# Import vision module for actual vision capabilities
-from jarvis.vision.vision_module import VisionModule
+load_dotenv()
 
 
 class ToolExecutor:
@@ -52,11 +52,17 @@ class ToolExecutor:
             None
         """
         try:
-            self.ha_url: Optional[str] = home_assistant_url
-            self.ha_token: Optional[str] = ha_token
+            self.ha_url: Optional[str] = home_assistant_url or os.getenv("HOME_ASSISTANT_URL") or None
+            self.ha_token: Optional[str] = ha_token or os.getenv("HOME_ASSISTANT_TOKEN") or None
+            camera_index: int = int(os.getenv("CAMERA_INDEX", "0"))
 
-            # Initialize vision module for camera/image analysis
-            self.vision: VisionModule = VisionModule(camera_index=0)
+            # Lazy-import vision to avoid hard dependency on cv2/ollama at startup
+            self.vision = None
+            try:
+                from jarvis.vision.vision_module import VisionModule
+                self.vision = VisionModule(camera_index=camera_index)
+            except Exception as ve:
+                print(f"[ToolExecutor] Vision module unavailable: {ve}")
 
             if self.ha_url:
                 print(f"[ToolExecutor] Home Assistant configured: {self.ha_url}")
@@ -531,8 +537,9 @@ class ToolExecutor:
             Base64-encoded JPEG or error message
         """
         try:
+            if not self.vision:
+                return "Error: Vision module not available (opencv not installed)"
             print(f"[ToolExecutor] Capturing image from webcam...")
-            # Use actual vision module
             image_path: str = self.vision.capture_image()
             if image_path:
                 return f"Image captured and saved to: {image_path}"
@@ -542,7 +549,7 @@ class ToolExecutor:
             print(f"[ToolExecutor] Error in _capture_image: {e}")
             return f"Image capture error: {e}"
 
-    def _describe_image(self, image_path: str, prompt: str = None) -> str:
+    def _describe_image(self, image_path: str, prompt: Optional[str] = None) -> str:
         """
         Describe an image using LLaVA vision AI.
 
@@ -554,20 +561,19 @@ class ToolExecutor:
             Image description or error
         """
         try:
+            if not self.vision:
+                return "Error: Vision module not available (opencv not installed)"
             if not image_path:
                 return "Error: No image path provided"
 
             print(f"[ToolExecutor] Analyzing image: {image_path}")
 
-            # Use actual vision module
             if image_path.lower() == "camera":
-                # Capture from camera first
                 captured_path: Optional[str] = self.vision.capture_image()
                 if not captured_path:
                     return "Error: Failed to capture image from camera"
                 image_path = captured_path
 
-            # Use default prompt if none provided
             if not prompt:
                 prompt = "Describe what you see in this image in detail."
 
@@ -578,20 +584,13 @@ class ToolExecutor:
             return f"Image analysis error: {e}"
 
     def _detect_motion(self) -> str:
-        """
-        Detect motion on webcam.
-
-        Returns:
-            Motion detection result
-        """
+        """Detect motion on webcam."""
         try:
+            if not self.vision:
+                return "Error: Vision module not available (opencv not installed)"
             print(f"[ToolExecutor] Detecting motion...")
-            # Use actual vision module
             motion_detected: bool = self.vision.detect_motion()
-            if motion_detected:
-                return "Motion detected on camera"
-            else:
-                return "No motion detected"
+            return "Motion detected on camera" if motion_detected else "No motion detected"
         except Exception as e:
             print(f"[ToolExecutor] Error in _detect_motion: {e}")
             return f"Motion detection error: {e}"

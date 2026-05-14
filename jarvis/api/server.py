@@ -8,13 +8,20 @@ Serves as the bridge between the frontend (React dashboard) and the
 Jarvis agent backend (LLM, memory, tools).
 """
 
+import os
+import json
+import base64
+from datetime import datetime
+from typing import List, Optional, Dict, Any
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, WebSocket, HTTPException, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-import json
 
 from ..agent.agent import JarvisAgent
 from ..memory.manager import MemoryManager
@@ -47,6 +54,7 @@ print(f"[API] FastAPI app initialized")
 
 _agent: Optional[JarvisAgent] = None
 _memory: Optional[MemoryManager] = None
+_tts = None  # Lazy-initialized on first /chat/audio request
 
 
 def get_agent() -> JarvisAgent:
@@ -55,7 +63,11 @@ def get_agent() -> JarvisAgent:
     try:
         if _agent is None:
             print(f"[API] Initializing JarvisAgent...")
-            _agent = JarvisAgent(location="Kigali, Rwanda")
+            _agent = JarvisAgent(
+                location=os.getenv("LOCATION", "Kigali, Rwanda"),
+                home_assistant_url=os.getenv("HOME_ASSISTANT_URL") or None,
+                ha_token=os.getenv("HOME_ASSISTANT_TOKEN") or None,
+            )
         return _agent
     except Exception as e:
         print(f"[API] Error in get_agent: {e}")
@@ -73,6 +85,20 @@ def get_memory() -> MemoryManager:
     except Exception as e:
         print(f"[API] Error in get_memory: {e}")
         raise
+
+
+def get_tts():
+    """Get or create the global TTS instance (lazy, heavy init)."""
+    global _tts
+    try:
+        if _tts is None:
+            from ..voice.tts import TextToSpeech
+            print(f"[API] Initializing TextToSpeech...")
+            _tts = TextToSpeech()
+        return _tts
+    except Exception as e:
+        print(f"[API] TTS init failed: {e}")
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -121,25 +147,15 @@ class MemorySearchRequest(BaseModel):
 # REST Endpoints
 # ─────────────────────────────────────────────────────────────────────
 
-@app.get("/")
-async def root() -> Dict[str, str]:
-    """
-    Root endpoint with API information.
-
-    Returns:
-        Dict with API info and status
-    """
-    try:
-        print(f"[API] GET /")
-        return {
-            "name": "J.A.R.V.I.S. API",
-            "version": "1.0.0",
-            "status": "online",
-            "docs": "/docs"
-        }
-    except Exception as e:
-        print(f"[API] Error in root: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the Jarvis UI."""
+    ui_path = os.path.join(os.path.dirname(__file__), "..", "..", "ui", "index.html")
+    ui_path = os.path.normpath(ui_path)
+    if os.path.exists(ui_path):
+        with open(ui_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>J.A.R.V.I.S. API</h1><p>UI not found. See <a href='/docs'>/docs</a>.</p>")
 
 
 @app.get("/status")
@@ -206,6 +222,49 @@ async def chat(request: ChatRequest) -> Dict[str, Any]:
         raise
     except Exception as e:
         print(f"[API] Error in chat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/audio")
+async def chat_audio(request: ChatRequest) -> Dict[str, Any]:
+    """
+    Chat with Jarvis and receive both text response and audio as base64 WAV.
+
+    The browser uses the audio bytes to play Jarvis's voice and visualize the waveform.
+
+    Returns:
+        Dict with response text, base64-encoded WAV audio, and metadata
+    """
+    try:
+        if not request.message or not request.message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+        print(f"[API] POST /chat/audio: {request.message[:60]}...")
+
+        agent: JarvisAgent = get_agent()
+        response_text: str = agent.think(request.message)
+
+        # Generate TTS audio
+        audio_b64: Optional[str] = None
+        tts = get_tts()
+        if tts:
+            try:
+                audio_bytes: bytes = tts.generate_audio_bytes(response_text)
+                if audio_bytes:
+                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+            except Exception as tts_err:
+                print(f"[API] TTS error (non-fatal): {tts_err}")
+
+        return {
+            "response": response_text,
+            "audio": audio_b64,
+            "timestamp": datetime.now().isoformat(),
+            "status": "success"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[API] Error in chat_audio: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

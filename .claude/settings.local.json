@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import ollama; print\\('ollama ok', ollama.__version__\\)\")",
+      "Bash(python -c \"import ollama; r = ollama.list\\(\\); print\\(type\\(r\\)\\); print\\(dir\\(r\\)\\)\")",
+      "Bash(python -c \"import ollama; r = ollama.list\\(\\); print\\(r.keys\\(\\)\\); print\\(type\\(list\\(r.values\\(\\)\\)[0]\\)\\)\")",
+      "Bash(pip list *)",
+      "Bash(python *)"
+    ]
+  }
+}

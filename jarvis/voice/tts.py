@@ -6,11 +6,17 @@ Supports voice cloning with a 6-second voice sample.
 Plays audio through the system speaker.
 """
 
+import io
+import os
+import wave
 import numpy as np
 import sounddevice as sd
 from TTS.api import TTS
 import threading
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class TextToSpeech:
@@ -46,8 +52,8 @@ class TextToSpeech:
         Subsequent initializations use cached model (instant).
 
         Args:
-            speaker_wav: Optional path to a 6-second .wav voice sample
-                        for voice cloning. If None, uses default voice.
+            speaker_wav: Path to a 6-second .wav voice sample for voice cloning.
+                        Defaults to SPEAKER_WAV env var. If empty, uses default voice.
 
         Raises:
             Exception: If TTS model cannot be loaded or speaker_wav is invalid
@@ -57,24 +63,20 @@ class TextToSpeech:
             print(f"[TTS] (First run may take 2-5 minutes to download model)")
 
             self.tts: TTS = TTS(self.MODEL_NAME)
-            self.speaker_wav: Optional[str] = speaker_wav
+            self.speaker_wav: Optional[str] = speaker_wav or os.getenv("SPEAKER_WAV") or None
             self.sample_rate: int = self.SAMPLE_RATE
 
             # Validate speaker_wav if provided
             if self.speaker_wav:
-                try:
-                    import os
-                    if not os.path.exists(self.speaker_wav):
-                        raise FileNotFoundError(
-                            f"speaker_wav file not found: {self.speaker_wav}"
-                        )
-                    print(
-                        f"[TTS] Voice cloning enabled: {self.speaker_wav}"
-                    )
-                except Exception as e:
-                    print(f"[TTS] Warning: {e}")
+                if not os.path.exists(self.speaker_wav):
+                    print(f"[TTS] Warning: SPEAKER_WAV not found: {self.speaker_wav}")
                     print(f"[TTS] Falling back to default voice.")
                     self.speaker_wav = None
+                else:
+                    print(f"[TTS] Voice cloning enabled: {self.speaker_wav}")
+
+            if not self.speaker_wav:
+                print(f"[TTS] Using default voice: {self.DEFAULT_SPEAKER}")
 
             print(f"[TTS] TTS engine ready.")
         except Exception as e:
@@ -131,6 +133,43 @@ class TextToSpeech:
             print(f"[TTS] Playback complete.")
         except Exception as e:
             print(f"[TTS] Error in speak: {e}")
+
+    def generate_audio_bytes(self, text: str) -> bytes:
+        """
+        Synthesize text and return raw WAV bytes (does not play audio).
+
+        Used by the API to send audio to the browser for playback + waveform visualization.
+
+        Args:
+            text: Text to synthesize
+
+        Returns:
+            WAV file bytes, or empty bytes on error
+        """
+        try:
+            if not text or not text.strip():
+                return b""
+
+            if self.speaker_wav:
+                wav = self.tts.tts(text=text, speaker_wav=self.speaker_wav, language="en")
+            else:
+                wav = self.tts.tts(text=text, speaker=self.DEFAULT_SPEAKER, language="en")
+
+            audio = np.array(wav, dtype=np.float32)
+            audio_int16 = (audio * 32767).astype(np.int16)
+
+            buf = io.BytesIO()
+            with wave.open(buf, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(self.SAMPLE_RATE)
+                wf.writeframes(audio_int16.tobytes())
+
+            print(f"[TTS] Audio bytes generated ({len(buf.getvalue())} bytes).")
+            return buf.getvalue()
+        except Exception as e:
+            print(f"[TTS] Error in generate_audio_bytes: {e}")
+            return b""
 
     def speak_async(self, text: str) -> None:
         """

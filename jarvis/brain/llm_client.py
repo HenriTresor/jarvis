@@ -6,6 +6,7 @@ Supports both single-call and streaming interactions.
 Migration path: swap ollama calls for anthropic.messages.create() (same interface).
 """
 
+import os
 import ollama
 from typing import List, Dict, Any, Optional, Generator
 
@@ -40,14 +41,14 @@ class LLMClient:
             print(chunk, end="", flush=True)
     """
 
-    MODEL: str = "llama3.1:8b"
+    MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     DEFAULT_TIMEOUT: int = 300  # 5 minutes
 
     def __init__(self) -> None:
         """
         Initialize the LLM client and verify Ollama is running.
 
-        Attempts to connect to Ollama at the default localhost:11434.
+        Attempts to connect to Ollama at OLLAMA_HOST (default localhost:11434).
         If Ollama is not running, raises an exception with clear instructions.
 
         Raises:
@@ -55,10 +56,14 @@ class LLMClient:
         """
         try:
             print(f"[LLM] Connecting to Ollama...")
-            # Verify Ollama is running by listing available models
-            models: List[Dict[str, Any]] = ollama.list()
+            models_resp = ollama.list()
+            if isinstance(models_resp, dict):
+                model_list = models_resp.get('models', [])
+            else:
+                model_list = getattr(models_resp, 'models', []) or []
+            model_count = len(model_list)
             print(f"[LLM] Connected to Ollama.")
-            print(f"[LLM] Available models: {len(models)}")
+            print(f"[LLM] Available models: {model_count}")
             print(f"[LLM] Using model: {self.MODEL}")
         except Exception as e:
             error_msg: str = (
