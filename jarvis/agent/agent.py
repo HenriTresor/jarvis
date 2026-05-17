@@ -912,11 +912,6 @@ class JarvisAgent:
                         yield word + ("" if i == len(words) - 1 else " ")
                     return
 
-                # Yield an immediate spoken line before tools execute
-                pre_msg = self._pre_execution_message(tool_calls)
-                if pre_msg:
-                    yield pre_msg + " "
-
                 # Execute tool calls
                 self.conversation_history.append({
                     "role": "assistant",

@@ -485,7 +485,6 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
                 loop = asyncio.get_event_loop()
                 full_text: str = ""
-                pre_exec_text: str = ""  # track what was already announced
 
                 while True:
                     item = await loop.run_in_executor(None, chunk_queue.get)
@@ -495,47 +494,14 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         await websocket.send_json({"error": str(item), "done": True})
                         break
                     full_text += item
-
-                    # First chunk: if it's a short complete sentence it's a pre-execution
-                    # announcement — generate and send its audio immediately so the user
-                    # hears Jarvis speak before the long tool wait begins.
-                    stripped = item.strip()
-                    if not pre_exec_text and stripped.endswith(".") and len(stripped.split()) <= 8:
-                        pre_exec_text = stripped
-                        pre_audio_b64: Optional[str] = None
-                        tts = get_tts()
-                        if tts:
-                            try:
-                                pre_bytes: bytes = await loop.run_in_executor(
-                                    None, tts.generate_audio_bytes, stripped
-                                )
-                                if pre_bytes:
-                                    pre_audio_b64 = base64.b64encode(pre_bytes).decode("utf-8")
-                            except Exception as pre_err:
-                                print(f"[API] Pre-exec TTS error (non-fatal): {pre_err}")
-                        await websocket.send_json({"chunk": item, "done": False, "pre_audio": pre_audio_b64})
-                    else:
-                        await websocket.send_json({"chunk": item, "done": False})
-
-                # Generate final audio — strip the pre-exec part so it isn't repeated
-                final_text: str = full_text.strip()
-                if pre_exec_text and final_text.startswith(pre_exec_text):
-                    final_text = final_text[len(pre_exec_text):].strip()
-
-                # Skip final audio if the pre-exec already announced the action
-                # and the remaining text is just a short confirmation ("Paused.",
-                # "Done.", "Opened chrome, sir." etc.) — speaking both is redundant.
-                # Only generate audio when the final text is a meaningful answer (>5 words).
-                needs_final_audio = final_text and (
-                    not pre_exec_text or len(final_text.split()) > 5
-                )
+                    await websocket.send_json({"chunk": item, "done": False})
 
                 audio_b64: Optional[str] = None
                 tts = get_tts()
-                if tts and needs_final_audio:
+                if tts and full_text.strip():
                     try:
                         audio_bytes: bytes = await loop.run_in_executor(
-                            None, tts.generate_audio_bytes, final_text
+                            None, tts.generate_audio_bytes, full_text.strip()
                         )
                         if audio_bytes:
                             audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")

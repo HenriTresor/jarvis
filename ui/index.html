@@ -864,8 +864,7 @@ function sendMsg(text) {
     try{
       const d=JSON.parse(e.data);
       if(d.chunk){full+=d.chunk; updTyping(jw,full);}
-      if(d.pre_audio) playPreExec(d.pre_audio);
-      if(d.error){finalTyping(jw,full||'System error, sir.'); setStatus('ERROR','offline'); donePro(); return;}
+if(d.error){finalTyping(jw,full||'System error, sir.'); setStatus('ERROR','offline'); donePro(); return;}
       if(d.done){
         finalTyping(jw,full); pollStatus(); setStatus('ONLINE','online');
         if(d.audio){document.body.classList.remove('processing'); isProcessing=false; playAudio(d.audio);}
@@ -879,17 +878,6 @@ function sendMsg(text) {
 // ── AUDIO ─────────────────────────────────────────────────────
 function b64buf(b64) { const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return u.buffer.slice(0); }
 
-function playPreExec(b64) {
-  try{
-    audioCtx.decodeAudioData(b64buf(b64)).then(ab=>{
-      if(micSource) try{micSource.disconnect(analyser)}catch(_){}
-      const s=audioCtx.createBufferSource(); s.buffer=ab;
-      s.connect(analyser); s.connect(audioCtx.destination);
-      s.onended=()=>{ if(micSource) try{micSource.connect(analyser)}catch(_){} };
-      s.start();
-    }).catch(e=>console.error('[pre-exec]',e));
-  }catch(e){console.error('[pre-exec decode]',e);}
-}
 
 async function playAudio(b64) {
   try{
