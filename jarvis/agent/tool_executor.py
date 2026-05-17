@@ -562,98 +562,207 @@ class ToolExecutor:
             print(f"[ToolExecutor] Error in _save_note: {e}")
             return f"Note save error: {e}"
 
-    def _send_email(self, to: str, subject: str, body: str) -> str:
-        """
-        Send an email via Gmail (requires OAuth setup).
+    # ── Calendar helpers ──────────────────────────────────────────
+    _CALENDAR_PATH: str = os.path.expanduser("~/.local/share/jarvis/calendar.json")
 
-        Args:
-            to: Recipient email address
-            subject: Email subject
-            body: Email body
-
-        Returns:
-            Success message or error
-        """
+    def _load_calendar(self) -> list:
         try:
-            if not to or not subject:
-                return "Error: Missing recipient or subject"
+            if os.path.exists(self._CALENDAR_PATH):
+                with open(self._CALENDAR_PATH) as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return []
 
-            print(f"[ToolExecutor] Sending email to: {to}")
-            # Gmail integration would go here
-            # For now, return simulated response
-            return f"[SIMULATED] Email sent to {to}"
+    def _save_calendar(self, events: list) -> None:
+        os.makedirs(os.path.dirname(self._CALENDAR_PATH), exist_ok=True)
+        with open(self._CALENDAR_PATH, "w") as f:
+            json.dump(events, f, indent=2, default=str)
+
+    @staticmethod
+    def _fmt_dt(iso: str) -> str:
+        """Convert ISO 8601 string to a human-readable form."""
+        try:
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00").replace("z", "+00:00"))
+            return dt.strftime("%A %B %d at %-I:%M %p").replace(" 0", " ")
+        except Exception:
+            return iso
+
+    # ── Email ─────────────────────────────────────────────────────
+
+    def _send_email(self, to: str, subject: str, body: str = "") -> str:
+        """Send email via SMTP. Requires GMAIL_USER + GMAIL_APP_PASSWORD in .env."""
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        smtp_user = os.getenv("GMAIL_USER") or os.getenv("SMTP_USER")
+        smtp_pass = os.getenv("GMAIL_APP_PASSWORD") or os.getenv("SMTP_PASSWORD")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+
+        if not smtp_user or not smtp_pass:
+            return (
+                "Email is not configured. "
+                "Add GMAIL_USER and GMAIL_APP_PASSWORD to .env to enable sending."
+            )
+        if not to or not subject:
+            return "Error: Missing recipient or subject."
+
+        try:
+            print(f"[ToolExecutor] Sending email to {to}...")
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body or "", "plain"))
+
+            with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                srv.ehlo(); srv.starttls(); srv.ehlo()
+                srv.login(smtp_user, smtp_pass)
+                srv.sendmail(smtp_user, to, msg.as_string())
+
+            return f"Email sent to {to} with subject '{subject}'."
+        except smtplib.SMTPAuthenticationError:
+            return "Email authentication failed. Check GMAIL_USER and GMAIL_APP_PASSWORD in .env."
         except Exception as e:
-            print(f"[ToolExecutor] Error in _send_email: {e}")
+            print(f"[ToolExecutor] Email send error: {e}")
             return f"Email send error: {e}"
 
     def _get_unread_emails(self, max_results: int = 5) -> str:
-        """
-        Fetch unread emails from Gmail (requires OAuth setup).
+        """Fetch unread emails via IMAP. Requires GMAIL_USER + GMAIL_APP_PASSWORD in .env."""
+        import imaplib
+        import email as _email
+        from email.header import decode_header as _dh
 
-        Args:
-            max_results: Max emails to fetch
+        smtp_user = os.getenv("GMAIL_USER") or os.getenv("SMTP_USER")
+        smtp_pass = os.getenv("GMAIL_APP_PASSWORD") or os.getenv("SMTP_PASSWORD")
+        imap_host = os.getenv("IMAP_HOST", "imap.gmail.com")
 
-        Returns:
-            Formatted email list or error
-        """
+        if not smtp_user or not smtp_pass:
+            return (
+                "Email is not configured. "
+                "Add GMAIL_USER and GMAIL_APP_PASSWORD to .env to read emails."
+            )
+
+        def _decode(s: str) -> str:
+            if not s:
+                return ""
+            parts = _dh(s)
+            out = []
+            for part, enc in parts:
+                if isinstance(part, bytes):
+                    out.append(part.decode(enc or "utf-8", errors="ignore"))
+                else:
+                    out.append(str(part))
+            return "".join(out)
+
         try:
             print(f"[ToolExecutor] Fetching unread emails...")
-            # Gmail integration would go here
-            # For now, return simulated response
-            return "[SIMULATED] You have 3 unread emails"
+            mail = imaplib.IMAP4_SSL(imap_host)
+            mail.login(smtp_user, smtp_pass)
+            mail.select("inbox")
+
+            _, data = mail.search(None, "UNSEEN")
+            uids = data[0].split()
+            total = len(uids)
+
+            if not uids:
+                mail.logout()
+                return "No unread emails."
+
+            fetch_uids = uids[-min(int(max_results), total):]
+            lines = [f"{total} unread email{'s' if total != 1 else ''}:"]
+
+            for uid in reversed(fetch_uids):
+                _, msg_data = mail.fetch(uid, "(RFC822)")
+                msg = _email.message_from_bytes(msg_data[0][1])
+                subject = _decode(msg["Subject"])
+                sender  = _decode(msg["From"])
+                date    = msg.get("Date", "")
+
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        if part.get_content_type() == "text/plain":
+                            try:
+                                body = part.get_payload(decode=True).decode("utf-8", errors="ignore")[:180]
+                            except Exception:
+                                pass
+                            break
+                else:
+                    try:
+                        body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")[:180]
+                    except Exception:
+                        pass
+
+                lines.append(f"\nFrom: {sender}\nSubject: {subject}\nDate: {date}\n{body.strip()}")
+
+            mail.close(); mail.logout()
+            return "\n".join(lines)
+        except imaplib.IMAP4.error as e:
+            return f"Email authentication failed. Check GMAIL_USER and GMAIL_APP_PASSWORD. ({e})"
         except Exception as e:
-            print(f"[ToolExecutor] Error in _get_unread_emails: {e}")
+            print(f"[ToolExecutor] Email fetch error: {e}")
             return f"Email fetch error: {e}"
 
+    # ── Calendar ──────────────────────────────────────────────────
+
     def _get_upcoming_events(self, max_events: int = 5) -> str:
-        """
-        Fetch upcoming calendar events (requires OAuth setup).
-
-        Args:
-            max_events: Max events to fetch
-
-        Returns:
-            Formatted event list or error
-        """
+        """Return upcoming events from the local Jarvis calendar."""
         try:
             print(f"[ToolExecutor] Fetching upcoming events...")
-            # Google Calendar integration would go here
-            # For now, return simulated response
-            return "[SIMULATED] You have 2 upcoming events today"
+            events = self._load_calendar()
+            now_str = datetime.now().strftime("%Y-%m-%dT%H:%M")
+
+            upcoming = sorted(
+                [e for e in events if e.get("start", "") >= now_str[:10]],
+                key=lambda e: e.get("start", "")
+            )[:int(max_events)]
+
+            if not upcoming:
+                return "No upcoming events in your calendar."
+
+            lines = [f"{len(upcoming)} upcoming event{'s' if len(upcoming) != 1 else ''}:"]
+            for e in upcoming:
+                time_str = self._fmt_dt(e.get("start", ""))
+                desc = f" — {e['description']}" if e.get("description") else ""
+                lines.append(f"- {e['title']}: {time_str}{desc}")
+
+            return "\n".join(lines)
         except Exception as e:
-            print(f"[ToolExecutor] Error in _get_upcoming_events: {e}")
-            return f"Event fetch error: {e}"
+            print(f"[ToolExecutor] Calendar fetch error: {e}")
+            return f"Calendar fetch error: {e}"
 
     def _create_calendar_event(
         self,
         title: str,
         start: str,
-        end: str,
+        end: str = "",
         description: str = ""
     ) -> str:
-        """
-        Create a calendar event (requires OAuth setup).
-
-        Args:
-            title: Event title
-            start: ISO 8601 start time
-            end: ISO 8601 end time
-            description: Optional description
-
-        Returns:
-            Success message or error
-        """
+        """Create an event in the local Jarvis calendar."""
         try:
-            if not title or not start or not end:
-                return "Error: Missing required fields (title, start, end)"
+            if not title or not start:
+                return "Error: Provide at least a title and start time."
 
-            print(f"[ToolExecutor] Creating event: {title}")
-            # Google Calendar integration would go here
-            # For now, return simulated response
-            return f"[SIMULATED] Event '{title}' created for {start}"
+            print(f"[ToolExecutor] Creating calendar event: {title}")
+            events = self._load_calendar()
+            event = {
+                "id": str(int(datetime.now().timestamp() * 1000)),
+                "title": title,
+                "start": start,
+                "end": end or start,
+                "description": description,
+                "created": datetime.now().isoformat(),
+            }
+            events.append(event)
+            self._save_calendar(events)
+
+            return f"Event '{title}' added to your calendar for {self._fmt_dt(start)}."
         except Exception as e:
-            print(f"[ToolExecutor] Error in _create_calendar_event: {e}")
-            return f"Calendar event error: {e}"
+            print(f"[ToolExecutor] Calendar create error: {e}")
+            return f"Calendar create error: {e}"
 
     def _capture_image(self, **_) -> str:
         """

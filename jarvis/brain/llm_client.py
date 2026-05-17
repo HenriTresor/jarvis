@@ -27,6 +27,8 @@ class LLMClient:
 
     # Ordered list of fallback models to try when the primary is rate-limited.
     # Each has a different free-tier quota so they fail independently.
+    # Only models that support tool/function calling.
+    # groq/compound and llama-prompt-guard-* are classifiers — they reject tool calls with 400.
     FALLBACK_CHAIN: List[str] = [
         m.strip()
         for m in os.getenv(
@@ -35,10 +37,8 @@ class LLMClient:
             llama-3.3-70b-versatile,
             openai/gpt-oss-20b,
             openai/gpt-oss-120b,
-            groq/compound,
-            meta-llama/llama-prompt-guard-2-22m,
-            meta-llama/llama-prompt-guard-2-86m,
             meta-llama/llama-4-scout-17b-16e-instruct,
+            meta-llama/llama-4-maverick-17b-128e-instruct,
             llama-3.1-8b-instant,
             qwen/qwen3-32b,
             """,
@@ -137,22 +137,36 @@ class LLMClient:
             err_str = str(e)
             last_error = err_str
 
-            if "rate_limit_exceeded" in err_str:
+            # Retry on rate limits, request-too-large, and model-specific errors.
+            # (400 "unsupported feature" is also retried — just with the next model.)
+            retryable = (
+                "rate_limit_exceeded" in err_str
+                or "429" in err_str
+                or "413" in err_str
+                or "too large" in err_str.lower()
+                or "reduce your message size" in err_str.lower()
+                or "not supported" in err_str.lower()
+            )
+            if retryable:
                 tried = {kwargs.get("model", self.MODEL)}
                 for fallback in self.FALLBACK_CHAIN:
                     if fallback in tried:
                         continue
                     tried.add(fallback)
-                    print(f"[LLM] Rate limit hit. Trying fallback: {fallback}...")
+                    is_rate_limit = "429" in last_error or "rate_limit" in last_error
+                    is_too_large  = "413" in last_error or "too large" in last_error.lower() or "reduce your message size" in last_error.lower()
+                    if is_rate_limit:
+                        print(f"[LLM] Rate limit hit. Trying fallback: {fallback}...")
+                    elif is_too_large:
+                        print(f"[LLM] Request too large. Trimming and trying: {fallback}...")
+                    else:
+                        print(f"[LLM] Model error. Trying fallback: {fallback}...")
                     try:
                         kwargs["model"] = fallback
-                        # If previous error was "request too large", trim history
-                        # to the 6 most recent messages so smaller models can handle it
-                        if "too large" in last_error or "reduce your message size" in last_error:
+                        if is_too_large:
                             msgs = kwargs["messages"]
-                            # Always keep the system message (first) + last 6 messages
                             system_msgs = [m for m in msgs if m.get("role") == "system"]
-                            non_system = [m for m in msgs if m.get("role") != "system"]
+                            non_system  = [m for m in msgs if m.get("role") != "system"]
                             kwargs["messages"] = system_msgs + non_system[-6:]
                             print(f"[LLM] Trimmed history to last 6 messages for {fallback}.")
                         response = self.client.chat.completions.create(**kwargs)
@@ -178,9 +192,6 @@ class LLMClient:
                     except Exception as fe:
                         last_error = str(fe)
                         print(f"[LLM] Fallback {fallback} failed: {last_error[:120]}")
-                        # Only stop the chain on auth/credential failures.
-                        # Everything else (model unavailable, unsupported features,
-                        # too large, rate limits) — keep trying the next model.
                         unrecoverable = any(t in last_error.lower() for t in (
                             "invalid api key", "invalid_api_key",
                             "authentication", "unauthorized", "forbidden",
@@ -188,9 +199,8 @@ class LLMClient:
                         if unrecoverable:
                             break
 
-                # All models exhausted — extract retry time and respond in character
                 retry_msg = self._parse_retry_time(last_error)
-                print(f"[LLM] All models rate-limited. {retry_msg}")
+                print(f"[LLM] All models exhausted. {retry_msg}")
                 return {
                     "content": (
                         f"All systems are currently throttled, sir. "

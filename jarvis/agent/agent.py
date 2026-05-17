@@ -156,10 +156,12 @@ class JarvisAgent:
 
     # Only these tools need LLM to interpret their output — everything else is relayed directly.
     _NEEDS_LLM_SYNTHESIS = {
-        "web_search",       # raw results need summarization
-        "get_weather",      # structured JSON → natural language
-        "get_unread_emails",
-        "get_upcoming_events",
+        "web_search",            # raw results need summarization
+        "get_weather",           # structured data → natural language
+        "get_unread_emails",     # email list → spoken summary
+        "get_upcoming_events",   # event list → spoken summary
+        "send_email",            # confirm naturally + handle config errors
+        "create_calendar_event", # confirm naturally + humanize time
         "describe_image",
         "detect_motion",
     }
@@ -615,6 +617,8 @@ class JarvisAgent:
                         result: str = self.executor.execute(
                             tool_name, tool_args
                         )
+                        if result.startswith("[SIMULATED]"):
+                            result = result[len("[SIMULATED]"):].strip()
 
                         _low = result.lower()
                         if (_low.startswith("error")
@@ -795,6 +799,8 @@ class JarvisAgent:
                                     tc_args = {}
                                 print(f"[Agent] Executing synthesis tool: {tc_name}")
                                 tc_result: str = self.executor.execute(tc_name, tc_args)
+                                if tc_result.startswith("[SIMULATED]"):
+                                    tc_result = tc_result[len("[SIMULATED]"):].strip()
                                 if tc_result.lower().startswith("error") or \
                                         "error" in tc_result.lower()[:30]:
                                     had_tool_errors = True
@@ -948,6 +954,9 @@ class JarvisAgent:
                             tool_args = {}
                         print(f"[Agent] Executing tool: {tool_name}")
                         result: str = self.executor.execute(tool_name, tool_args)
+                        # Strip any leftover [SIMULATED] prefix so it never reaches TTS
+                        if result.startswith("[SIMULATED]"):
+                            result = result[len("[SIMULATED]"):].strip()
                         _executed_tool_calls.append(tool_call)
                         _tool_results.append(result)
                         low = result.lower()
