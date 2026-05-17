@@ -4,556 +4,634 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>J.A.R.V.I.S.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 
-:root {
-  --bg:    #020b16;
-  --panel: #030d1c;
-  --bdr:   #0b2c47;
-  --bdr2:  #0e3354;
-  --ac:    #00c8ff;
-  --ac2:   #0055cc;
-  --ac3:   #003899;
-  --glow:  rgba(0,200,255,.14);
-  --text:  #6db8d8;
-  --tb:    #bce2f4;
-  --dim:   #143244;
-  --dim2:  #1f4a66;
-  --danger:#ff2a50;
-  --warn:  #ff9200;
-  --ok:    #00ec84;
-  --font:  'Courier New','Lucida Console',monospace;
+:root{
+  --bg:#010810;
+  --bg2:#020d1b;
+  --panel:#030f1e;
+  --panel2:#040f1f;
+  --bdr:#0a2440;
+  --bdr2:#0d2f52;
+  --ac:#00d4ff;
+  --acp:#8b5cf6;
+  --ok:#00ff9f;
+  --warn:#f97316;
+  --danger:#ef4444;
+  --text:#38bcd4;
+  --tb:#a5d8e8;
+  --dim:#0c2333;
+  --dim2:#183d55;
+  --font:'Share Tech Mono','Courier New',monospace;
+  --font-title:'Orbitron','Courier New',monospace;
 }
 
-html,body { height:100%; overflow:hidden; }
+html,body{height:100%;overflow:hidden;}
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  display: grid;
-  grid-template-rows: 46px 1fr 25px;
-  user-select: none;
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font);
+  display:grid;
+  grid-template-rows:48px 1fr 22px;
+  position:relative;
 }
 
-/* scanlines */
-body::after {
-  content:''; position:fixed; inset:0;
-  background: repeating-linear-gradient(
-    0deg, rgba(0,0,0,.05) 0, rgba(0,0,0,.05) 1px,
-    transparent 1px, transparent 3px
-  );
-  pointer-events:none; z-index:9999;
+/* ── BG NEURAL CANVAS ───────────────────── */
+#neural-bg{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
 }
 
-/* ── HEADER ─────────────────────────── */
-header {
-  background: linear-gradient(90deg,#020c1e,#030f24 50%,#020c1e);
-  border-bottom: 1px solid var(--bdr);
-  display: flex; align-items: center;
-  padding: 0 16px 0 18px;
-  position: relative; overflow:hidden;
-}
-header::after {
-  content:''; position:absolute; bottom:0; left:0; right:0; height:1px;
-  background: linear-gradient(90deg,transparent,var(--ac),transparent);
-  opacity:.3;
+/* ── VIGNETTE + SCANLINES ───────────────── */
+body::before{
+  content:'';position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:
+    radial-gradient(ellipse 80% 80% at 50% 50%,transparent 35%,rgba(1,8,16,.75) 100%),
+    repeating-linear-gradient(0deg,rgba(0,0,0,.035) 0,rgba(0,0,0,.035) 1px,transparent 1px,transparent 4px);
 }
 
-.h-logo { display:flex; align-items:center; gap:9px; margin-right:18px; }
-.h-logo svg { width:24px; height:24px; flex-shrink:0; }
-.h-title { font-size:12px; letter-spacing:7px; color:var(--ac); text-shadow:0 0 18px var(--ac); white-space:nowrap; }
-
-.h-sep { width:1px; height:20px; background:var(--bdr2); margin:0 14px; flex-shrink:0; }
-
-.h-meta { display:flex; align-items:center; gap:18px; font-size:8.5px; letter-spacing:2px; color:var(--dim2); flex:1; overflow:hidden; }
-.h-meta .v { color:var(--text); }
-
-.h-right { display:flex; align-items:center; gap:12px; }
-.h-time { font-size:11px; letter-spacing:2px; color:var(--text); white-space:nowrap; }
-
-.s-badge { display:flex; align-items:center; gap:7px; font-size:8.5px; letter-spacing:2px; }
-.s-dot-w { position:relative; width:9px; height:9px; }
-.s-dot {
-  position:absolute; inset:0; border-radius:50%;
-  background:var(--ac); box-shadow:0 0 10px var(--ac);
-  transition: background .3s, box-shadow .3s;
-}
-.s-ring {
-  position:absolute; inset:-4px; border-radius:50%;
-  border:1px solid var(--ac); opacity:.3;
-  animation: ring-exp 2.3s ease-out infinite;
-}
-.s-dot.offline   { background:var(--danger); box-shadow:0 0 8px var(--danger); }
-.s-dot.processing{ background:var(--warn);   box-shadow:0 0 10px var(--warn); animation:blink-f .4s step-end infinite; }
-
-/* ── MAIN GRID ───────────────────────── */
-main {
-  display: grid;
-  grid-template-columns: 218px 1fr 360px;
-  overflow: hidden;
+/* scan sweep */
+.scan-sweep{
+  position:fixed;left:0;right:0;height:120px;z-index:2;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(0,212,255,.025),transparent);
+  animation:scan-h 12s ease-in-out infinite;
 }
 
-/* ── METRICS SIDEBAR ─────────────────── */
-.m-panel {
-  background: var(--panel);
-  border-right: 1px solid var(--bdr);
-  display: flex; flex-direction:column;
-  overflow-y:auto; overflow-x:hidden;
-  padding: 13px 12px 18px;
-  gap: 14px;
+/* ── HEADER ─────────────────────────────── */
+header{
+  position:relative;z-index:10;
+  background:linear-gradient(90deg,#010b1c,#020e24 50%,#010b1c);
+  border-bottom:1px solid var(--bdr);
+  display:flex;align-items:center;padding:0 16px;gap:0;overflow:hidden;
 }
-.m-panel::-webkit-scrollbar { width:2px; }
-.m-panel::-webkit-scrollbar-thumb { background:var(--bdr2); }
+header::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent 0%,var(--ac) 25%,var(--acp) 75%,transparent 100%);
+  opacity:.45;
+}
 
-.sh {
-  font-size:7.5px; letter-spacing:3px; color:var(--dim2);
-  display:flex; align-items:center; gap:6px;
+.h-logo{display:flex;align-items:center;gap:9px;flex-shrink:0;margin-right:4px;}
+.h-logo svg{width:28px;height:28px;flex-shrink:0;}
+.h-title{font-family:var(--font-title);font-size:11px;letter-spacing:7px;color:var(--ac);text-shadow:0 0 18px var(--ac),0 0 36px rgba(0,212,255,.25);white-space:nowrap;}
+
+.h-div{width:1px;height:20px;background:var(--bdr2);margin:0 14px;flex-shrink:0;}
+
+.h-tags{display:flex;align-items:center;gap:8px;flex:1;overflow:hidden;}
+.h-tag{font-size:7.5px;letter-spacing:1.5px;color:var(--dim2);padding:2px 7px;border:1px solid rgba(0,212,255,.08);background:rgba(0,212,255,.03);white-space:nowrap;flex-shrink:0;}
+.h-tag .v{color:var(--text);}
+
+.h-right{display:flex;align-items:center;gap:12px;flex-shrink:0;}
+.h-time{font-family:var(--font-title);font-size:10px;letter-spacing:2px;color:var(--text);}
+
+.s-badge{display:flex;align-items:center;gap:8px;font-size:7.5px;letter-spacing:2px;}
+.s-dot-w{position:relative;width:8px;height:8px;}
+.s-dot{position:absolute;inset:0;border-radius:50%;background:var(--ac);box-shadow:0 0 8px var(--ac);transition:background .3s,box-shadow .3s;}
+.s-ring{position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--ac);opacity:.3;animation:ring-exp 2.4s ease-out infinite;}
+.s-dot.offline{background:var(--danger);box-shadow:0 0 8px var(--danger);}
+.s-dot.processing{background:var(--warn);box-shadow:0 0 10px var(--warn);animation:blink-f .45s step-end infinite;}
+
+/* ── MAIN GRID ──────────────────────────── */
+main{
+  position:relative;z-index:5;
+  display:grid;
+  grid-template-columns:224px 1fr 370px;
+  overflow:hidden;
 }
-.sh::after { content:''; flex:1; height:1px; background:var(--bdr); }
+
+/* ── LEFT: METRICS ──────────────────────── */
+.m-panel{
+  background:rgba(3,12,28,.85);
+  border-right:1px solid var(--bdr);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.m-hdr{
+  padding:8px 12px 7px;border-bottom:1px solid var(--bdr);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+  background:linear-gradient(90deg,rgba(0,212,255,.04),transparent);
+}
+.m-hdr-t{font-family:var(--font-title);font-size:7.5px;letter-spacing:4px;color:var(--ac);}
+.m-hdr-s{font-size:6.5px;letter-spacing:1.5px;color:var(--dim2);}
+.m-body{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;padding:10px 11px;display:flex;flex-direction:column;gap:14px;}
+.m-body::-webkit-scrollbar{display:none;}
+
+.m-sec-lbl{font-size:6.5px;letter-spacing:2.5px;color:var(--dim2);margin-bottom:7px;display:flex;align-items:center;gap:5px;}
+.m-sec-lbl::before{content:'';width:3px;height:3px;border-radius:50%;background:var(--ac);flex-shrink:0;}
 
 /* CPU gauge */
-.cpu-w { display:flex; flex-direction:column; align-items:center; gap:5px; }
-.cpu-g { position:relative; width:104px; height:104px; }
-.cpu-g svg { width:100%; height:100%; transform:rotate(-90deg); }
-.g-tr { fill:none; stroke:var(--bdr); stroke-width:6; }
-.g-fi {
-  fill:none; stroke:var(--ac); stroke-width:6; stroke-linecap:round;
-  filter:drop-shadow(0 0 5px var(--ac));
-  transition: stroke-dasharray .6s ease, stroke .4s;
-}
-.cpu-inner {
-  position:absolute; inset:0;
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  pointer-events:none;
-}
-.cpu-n { font-size:23px; color:var(--tb); line-height:1; letter-spacing:0; }
-.cpu-s { font-size:9px; color:var(--dim2); letter-spacing:1px; }
-.cpu-c { font-size:8px; letter-spacing:2px; color:var(--dim2); text-align:center; }
+.cpu-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;}
+.cpu-g{position:relative;width:106px;height:106px;flex-shrink:0;}
+.cpu-g svg{width:100%;height:100%;}
+.g-tr{fill:none;stroke:rgba(0,212,255,.08);stroke-width:5;stroke-linecap:round;}
+.g-fi{fill:none;stroke:var(--ac);stroke-width:5;stroke-linecap:round;
+  transition:stroke-dashoffset .8s ease,stroke .4s;
+  filter:drop-shadow(0 0 4px var(--ac));
+  transform:rotate(-90deg);transform-origin:53px 53px;}
+.cpu-inner{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.cpu-n{font-family:var(--font-title);font-size:22px;color:var(--ac);text-shadow:0 0 14px var(--ac);line-height:1;}
+.cpu-s{font-size:7px;letter-spacing:1px;color:var(--dim2);}
+.cpu-c{font-size:6.5px;letter-spacing:2px;color:var(--dim2);text-align:center;}
+#sparkline{display:block;width:100%;height:30px;margin-top:3px;}
 
-/* Bars */
-.mr { display:flex; flex-direction:column; gap:4px; }
-.mh { display:flex; justify-content:space-between; align-items:baseline; }
-.ml { font-size:8px; letter-spacing:2px; color:var(--dim2); }
-.mv { font-size:9px; letter-spacing:.5px; color:var(--text); }
-.mv.flash { animation:flash .3s ease; }
+/* bars */
+.m-bar{margin-bottom:6px;}
+.m-bar:last-child{margin-bottom:0;}
+.m-bar-hd{display:flex;justify-content:space-between;margin-bottom:3px;}
+.m-bar-k{font-size:7.5px;letter-spacing:1px;color:var(--dim2);}
+.mv{font-size:7.5px;color:var(--text);}
+.mv.flash{animation:flash-v .4s;}
+.bt{height:3px;background:rgba(0,212,255,.07);border-radius:2px;overflow:hidden;}
+.bf{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--ac),rgba(0,212,255,.7));transition:width .8s ease;}
+.bf.warn{background:linear-gradient(90deg,var(--warn),rgba(249,115,22,.7));}
+.bf.danger{background:linear-gradient(90deg,var(--danger),rgba(239,68,68,.7));}
 
-.bt { height:4px; background:var(--bdr); position:relative; overflow:hidden; }
-.bf {
-  height:100%; background:var(--ac2);
-  box-shadow:0 0 6px rgba(0,85,200,.5);
-  transition:width .65s ease; position:relative;
-}
-.bf::after {
-  content:''; position:absolute; right:0; top:0; bottom:0; width:3px;
-  background:var(--ac); box-shadow:0 0 8px var(--ac);
-}
-.bf.warn   { background:var(--warn); box-shadow:0 0 5px rgba(255,146,0,.5); }
-.bf.warn::after { background:var(--warn); }
-.bf.danger { background:var(--danger); box-shadow:0 0 5px rgba(255,42,80,.5); }
-.bf.danger::after { background:var(--danger); }
+/* net */
+.ng{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
+.ni{background:rgba(0,212,255,.03);border:1px solid var(--bdr);padding:5px 6px;}
+.nl{display:block;font-size:6.5px;letter-spacing:2px;color:var(--dim2);margin-bottom:2px;}
+.nv{font-size:9.5px;color:var(--text);}
 
-/* Net */
-.ng { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.ni { display:flex; flex-direction:column; gap:2px; }
-.nl { font-size:7.5px; letter-spacing:2px; color:var(--dim2); }
-.nv { font-size:10px; letter-spacing:.5px; color:var(--text); }
+/* misc info */
+.ig{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+.ii{background:rgba(0,212,255,.025);border:1px solid var(--bdr);padding:4px 6px;}
+.il{display:block;font-size:6.5px;letter-spacing:1.5px;color:var(--dim2);margin-bottom:2px;}
+.iv{font-size:8.5px;color:var(--text);}
+.iv.hot{color:var(--warn);}
+.iv.crit{color:var(--danger);}
 
-/* Info grid */
-.ig { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.ii { display:flex; flex-direction:column; gap:2px; }
-.il { font-size:7.5px; letter-spacing:2px; color:var(--dim2); }
-.iv { font-size:10px; letter-spacing:.5px; color:var(--text); }
-.iv.hot  { color:var(--warn); }
-.iv.crit { color:var(--danger); }
-
-/* Sparkline */
-.sp-w { display:flex; flex-direction:column; gap:3px; }
-#sparkline {
-  width:100%; height:36px; display:block;
-  background:rgba(2,8,20,.7);
-  border:1px solid var(--bdr);
+/* ── CENTER: VISUALIZER ─────────────────── */
+.vis{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:var(--bg2);position:relative;overflow:hidden;gap:0;
 }
 
-/* ── CENTER ───────────────────────────── */
-.vis {
-  display:flex; flex-direction:column;
-  align-items:center; justify-content:center;
-  gap:16px; padding:18px 20px;
-  position:relative; overflow:hidden;
-}
-
-/* dot grid bg */
-.vis::before {
-  content:''; position:absolute; inset:0;
-  background-image: radial-gradient(circle, rgba(0,50,90,.55) 1px, transparent 1px);
-  background-size:26px 26px; opacity:.4; pointer-events:none;
+/* hex grid */
+.vis::after{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(0,212,255,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,.025) 1px,transparent 1px);
+  background-size:40px 40px;
+  mask-image:radial-gradient(ellipse 60% 60% at 50% 45%,black 20%,transparent 75%);
 }
 
 /* corner brackets */
-.vc { position:absolute; width:20px; height:20px; pointer-events:none; }
-.vc::before,.vc::after { content:''; position:absolute; background:var(--bdr2); }
-.vc::before { height:1px; width:100%; }
-.vc::after  { width:1px;  height:100%; }
-.vc.tl { top:10px; left:10px; } .vc.tl::before,.vc.tl::after { top:0; left:0; }
-.vc.tr { top:10px; right:10px; } .vc.tr::before { top:0; right:0; left:auto; } .vc.tr::after { top:0; right:0; left:auto; }
-.vc.bl { bottom:10px; left:10px; } .vc.bl::before { bottom:0; top:auto; left:0; } .vc.bl::after { bottom:0; top:auto; left:0; }
-.vc.br { bottom:10px; right:10px; } .vc.br::before { bottom:0; top:auto; right:0; left:auto; } .vc.br::after { bottom:0; top:auto; right:0; left:auto; }
+.vc{position:absolute;width:16px;height:16px;pointer-events:none;z-index:6;}
+.vc.tl{top:10px;left:10px;border-top:1px solid var(--bdr2);border-left:1px solid var(--bdr2);}
+.vc.tr{top:10px;right:10px;border-top:1px solid var(--bdr2);border-right:1px solid var(--bdr2);}
+.vc.bl{bottom:10px;left:10px;border-bottom:1px solid var(--bdr2);border-left:1px solid var(--bdr2);}
+.vc.br{bottom:10px;right:10px;border-bottom:1px solid var(--bdr2);border-right:1px solid var(--bdr2);}
 
-/* ── ARC REACTOR ─────────────────────── */
-.reactor {
-  position:relative;
-  width:240px; height:240px;
-  flex-shrink:0; z-index:1;
+/* reactor */
+.reactor-wrap{
+  position:relative;width:280px;height:280px;flex-shrink:0;z-index:2;
+  margin-top:4px;
 }
 
-/* ring vis canvas — sits outside reactor bounds */
-#ring-vis {
-  position:absolute;
-  top:-32px; left:-32px;
-  width:304px; height:304px;
-  pointer-events:none; z-index:10;
+#ring-vis{
+  position:absolute;top:-38px;left:-38px;
+  width:356px;height:356px;
+  pointer-events:none;z-index:5;
 }
 
-.ring {
-  position:absolute; border-radius:50%;
-  top:50%; left:50%; transform:translate(-50%,-50%);
-  border:1px solid var(--ac);
-  box-shadow: 0 0 8px rgba(0,200,255,.14), inset 0 0 8px rgba(0,200,255,.05);
-  transition: box-shadow .3s, opacity .3s;
-}
-.r1 { width:240px; height:240px; opacity:.10; border-style:dashed; }
-.r2 { width:196px; height:196px; opacity:.27; animation:spin 16s linear infinite; }
-.r3 { width:158px; height:158px; opacity:.46; animation:spin 10s linear infinite reverse; }
-.r4 { width:122px; height:122px; opacity:.68; border-width:1.5px; }
-.r5 { width:88px;  height:88px;  opacity:.84; border-style:dashed; animation:spin 5.5s linear infinite; }
-.r6 { width:56px;  height:56px;  opacity:.94; border-width:2px; animation:spin 3.5s linear infinite reverse; }
-
-.aseg {
-  position:absolute; border-radius:50%;
-  top:50%; left:50%; transform:translate(-50%,-50%);
-  border:2px solid transparent;
-}
-.aseg.a1 { width:196px; height:196px; border-top-color:var(--ac); animation:spin 4s linear infinite; filter:drop-shadow(0 0 4px var(--ac)); }
-.aseg.a2 { width:158px; height:158px; border-bottom-color:rgba(0,200,255,.38); animation:spin 6.5s linear infinite reverse; }
-
-.core {
-  position:absolute; width:38px; height:38px;
-  background:radial-gradient(circle,#fff 0%,var(--ac) 26%,var(--ac2) 56%,transparent 100%);
-  border-radius:50%; top:50%; left:50%; transform:translate(-50%,-50%);
-  box-shadow:0 0 22px var(--ac),0 0 55px rgba(0,88,220,.5),0 0 100px rgba(0,50,180,.3);
-  animation:pulse-core 2.6s ease-in-out infinite; z-index:2;
+#reactor-svg{
+  position:absolute;inset:0;width:100%;height:100%;z-index:3;overflow:visible;
 }
 
-/* ── MODE LABEL ──────────────────────── */
-.mode {
-  font-size:9.5px; letter-spacing:5px; color:var(--dim2);
-  text-transform:uppercase; z-index:1;
-  display:flex; align-items:center; gap:7px;
-  transition: color .3s, text-shadow .3s;
-}
-.mode::before,.mode::after { content:'◈'; font-size:7px; opacity:.45; }
-.mode.listening  { color:var(--ac2); }
-.mode.speaking   { color:var(--ac); text-shadow:0 0 10px var(--ac); }
-.mode.processing { color:var(--warn); }
+.rg{transform-box:fill-box;transform-origin:center;}
+.rg1{animation:orbit 90s linear infinite;}
+.rg2{animation:orbit-rev 35s linear infinite;}
+.rg3{animation:orbit 22s linear infinite;}
+.rg4{animation:orbit-rev 13s linear infinite;}
+.rg5{animation:orbit 8s linear infinite;}
 
-/* ── WAVEFORM ────────────────────────── */
-.wf-wrap {
-  width:100%; max-width:560px; z-index:1;
-  position:relative;
+.reactor-core{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  width:78px;height:78px;z-index:6;
+  border-radius:50%;
+  background:radial-gradient(circle at 38% 32%,rgba(0,240,255,.95),rgba(0,140,220,.65) 45%,rgba(0,35,70,.85));
+  box-shadow:0 0 22px rgba(0,212,255,.85),0 0 44px rgba(0,212,255,.35),0 0 90px rgba(0,212,255,.15),inset 0 0 18px rgba(0,212,255,.28);
+  animation:pulse-core 3.5s ease-in-out infinite;
+  transition:background .5s,box-shadow .5s;
 }
-/* fade edges */
-.wf-wrap::before,.wf-wrap::after {
-  content:''; position:absolute; top:0; bottom:0; width:24px;
-  z-index:2; pointer-events:none;
-}
-.wf-wrap::before { left:0;  background:linear-gradient(90deg,var(--bg),transparent); }
-.wf-wrap::after  { right:0; background:linear-gradient(270deg,var(--bg),transparent); }
+.reactor-core::before{content:'';position:absolute;inset:10px;border-radius:50%;border:1px solid rgba(0,212,255,.38);}
+.reactor-core::after{content:'';position:absolute;inset:26px;border-radius:50%;background:rgba(0,200,240,.22);box-shadow:0 0 10px rgba(0,212,255,.55);}
 
-/* top + bottom glow lines */
-.wf-wrap > .wf-line-t,
-.wf-wrap > .wf-line-b {
-  position:absolute; left:0; right:0; height:1px;
-  background:linear-gradient(90deg,transparent,rgba(0,200,255,.25),transparent);
-  z-index:3; pointer-events:none;
+body.speaking .reactor-core{
+  background:radial-gradient(circle at 38% 32%,rgba(180,255,255,1),rgba(0,200,235,.75) 45%,rgba(0,50,90,.9));
+  box-shadow:0 0 35px rgba(0,212,255,1),0 0 70px rgba(0,212,255,.6),0 0 120px rgba(0,212,255,.3),inset 0 0 24px rgba(0,212,255,.5);
+  animation:pulse-core-fast 1s ease-in-out infinite;
 }
-.wf-wrap > .wf-line-t { top:-1px; }
-.wf-wrap > .wf-line-b { bottom:-1px; }
-
-#waveform {
-  display:block; width:100%; height:88px;
-  background:rgba(2,7,18,.75);
+body.processing .reactor-core{
+  background:radial-gradient(circle at 38% 32%,rgba(255,200,60,1),rgba(200,90,0,.75) 45%,rgba(60,20,0,.9));
+  box-shadow:0 0 28px rgba(249,115,22,.9),0 0 55px rgba(249,115,22,.4),0 0 90px rgba(249,115,22,.2),inset 0 0 18px rgba(249,115,22,.35);
+  animation:pulse-core-med 1.5s ease-in-out infinite;
+}
+body.listening .reactor-core{
+  box-shadow:0 0 25px rgba(0,212,255,.95),0 0 50px rgba(0,212,255,.45),0 0 100px rgba(139,92,246,.25),inset 0 0 18px rgba(0,212,255,.32);
 }
 
-/* ── INPUT ────────────────────────────── */
-.inp-bar {
-  display:flex; gap:6px;
-  width:100%; max-width:560px; z-index:1;
+/* mode label + dots */
+.state-area{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:10px;z-index:2;}
+.mode-lbl{
+  font-family:var(--font-title);font-size:8px;letter-spacing:5px;
+  color:var(--dim2);transition:color .3s,text-shadow .3s;
 }
-.inp-bar input {
-  flex:1;
-  background:rgba(3,10,23,.96);
-  border:1px solid var(--bdr);
-  border-left:2px solid var(--ac2);
-  color:var(--tb); font-family:var(--font);
-  font-size:12px; padding:9px 13px; outline:none;
-  letter-spacing:.5px;
-  transition:border-color .2s, box-shadow .2s;
-}
-.inp-bar input:focus { border-color:var(--ac); box-shadow:inset 0 0 0 1px rgba(0,200,255,.07); }
-.inp-bar input::placeholder { color:var(--dim); letter-spacing:1px; }
+.mode-lbl.listening{color:var(--ac);text-shadow:0 0 12px var(--ac);}
+.mode-lbl.processing{color:var(--warn);text-shadow:0 0 12px var(--warn);}
+.mode-lbl.speaking{color:var(--ac);text-shadow:0 0 16px var(--ac);}
+.mode-dots{display:flex;gap:7px;}
+.mode-dot{width:4px;height:4px;border-radius:50%;background:var(--dim);transition:background .3s,box-shadow .3s;}
+.mode-dot.on{background:var(--ac);box-shadow:0 0 6px var(--ac);}
+.mode-dot.proc{background:var(--warn);box-shadow:0 0 6px var(--warn);}
+.mode-dot.speak{background:var(--ac);box-shadow:0 0 8px var(--ac);animation:blink-f .6s step-end infinite;}
 
-.btn {
-  border:1px solid var(--bdr); background:transparent;
-  color:var(--text); font-family:var(--font);
-  font-size:10px; padding:9px 11px; cursor:pointer;
-  letter-spacing:1.5px; text-transform:uppercase;
-  transition:all .14s; white-space:nowrap;
+/* waveform */
+.wf-wrap{
+  width:100%;max-width:580px;padding:0 18px;margin-top:14px;z-index:2;flex-shrink:0;
 }
-.btn:hover { border-color:var(--ac); color:var(--ac); box-shadow:0 0 10px var(--glow); }
-.btn-mic { font-size:14px; padding:9px 10px; }
-.btn-mic.active { background:rgba(0,200,255,.08); color:var(--ac); border-color:var(--ac); box-shadow:0 0 12px rgba(0,200,255,.25); }
-.btn-send { background:var(--ac2); border-color:var(--ac2); color:#fff; font-weight:bold; letter-spacing:2px; }
-.btn-send:hover { background:var(--ac); border-color:var(--ac); color:var(--bg); }
+.wf-line{height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,.18) 20%,rgba(139,92,246,.12) 80%,transparent);}
+#waveform{
+  display:block;width:100%;height:88px;
+  background:rgba(2,10,22,.6);
+  transform:perspective(600px) rotateX(10deg);
+  transform-origin:bottom center;
+}
 
-/* ── CHAT ─────────────────────────────── */
-.chat-panel {
-  background:var(--panel);
+/* input bar */
+.inp-bar{
+  display:flex;gap:8px;align-items:center;
+  width:100%;max-width:580px;padding:10px 18px 0;z-index:2;flex-shrink:0;
+}
+#txt-input{
+  flex:1;background:rgba(0,212,255,.04);
+  border:1px solid var(--bdr2);border-bottom:1px solid rgba(0,212,255,.25);
+  color:var(--tb);font-family:var(--font);font-size:11px;
+  padding:7px 11px;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+#txt-input:focus{border-color:rgba(0,212,255,.4);box-shadow:0 0 0 1px rgba(0,212,255,.08),0 4px 12px rgba(0,0,0,.4);}
+#txt-input::placeholder{color:var(--dim2);}
+.btn{
+  background:transparent;border:1px solid var(--bdr2);color:var(--dim2);
+  font-family:var(--font);font-size:8.5px;letter-spacing:1.5px;
+  padding:7px 11px;cursor:pointer;transition:all .2s;white-space:nowrap;flex-shrink:0;
+}
+.btn:hover{border-color:var(--ac);color:var(--ac);box-shadow:0 0 8px rgba(0,212,255,.12);}
+.btn:active{background:rgba(0,212,255,.07);}
+#mic-btn.active{
+  border-color:var(--danger);color:var(--danger);
+  box-shadow:0 0 8px rgba(239,68,68,.2);
+  animation:blink-f .9s step-end infinite;
+}
+
+/* ── RIGHT: CHAT ────────────────────────── */
+.chat-panel{
   border-left:1px solid var(--bdr);
-  display:flex; flex-direction:column; overflow:hidden;
+  background:rgba(3,11,24,.88);
+  display:flex;flex-direction:column;overflow:hidden;
 }
-.chat-head {
-  padding:9px 13px;
-  border-bottom:1px solid var(--bdr);
-  font-size:8.5px; letter-spacing:3px; color:var(--ac);
-  display:flex; align-items:center; gap:8px;
-  background:linear-gradient(90deg,rgba(0,200,255,.04),transparent);
-  flex-shrink:0;
+.chat-head{
+  padding:8px 12px 7px;border-bottom:1px solid var(--bdr);
+  display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+  background:linear-gradient(270deg,rgba(139,92,246,.04),transparent);
 }
-.chat-count { margin-left:auto; color:var(--dim2); letter-spacing:2px; }
+.chat-head-t{font-family:var(--font-title);font-size:7.5px;letter-spacing:4px;color:var(--acp);}
+.chat-count{font-size:6.5px;letter-spacing:1.5px;color:var(--dim2);}
 
-.chat-log {
-  flex:1; overflow-y:auto;
-  padding:10px 9px; display:flex; flex-direction:column;
-  gap:8px; scroll-behavior:smooth;
+#chat-log{
+  flex:1;overflow-y:auto;overflow-x:hidden;
+  padding:10px 9px;display:flex;flex-direction:column;gap:8px;
+  scrollbar-width:thin;scrollbar-color:var(--bdr2) transparent;
 }
-.chat-log::-webkit-scrollbar { width:2px; }
-.chat-log::-webkit-scrollbar-thumb { background:var(--bdr2); }
+#chat-log::-webkit-scrollbar{width:2px;}
+#chat-log::-webkit-scrollbar-track{background:transparent;}
+#chat-log::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:2px;}
 
-.msg { max-width:95%; font-size:11.5px; line-height:1.56; }
-.msg-who {
-  font-size:7.5px; letter-spacing:2.5px; margin-bottom:3px;
-  display:flex; align-items:center; gap:5px;
-}
-.msg-who::before { content:''; width:4px; height:4px; border-radius:50%; background:currentColor; flex-shrink:0; }
-.msg-body { padding:8px 11px; font-size:11.5px; }
-.msg-ts { font-size:7px; letter-spacing:1px; color:var(--dim); margin-top:3px; }
+/* messages */
+.msg{max-width:95%;animation:materialize .18s ease-out;}
+.msg-who{font-size:6.5px;letter-spacing:2px;margin-bottom:3px;}
+.msg-body{padding:7px 10px;font-size:11px;line-height:1.58;white-space:pre-wrap;word-break:break-word;}
+.msg-ts{font-size:6px;letter-spacing:1px;color:var(--dim);margin-top:2px;}
 
-.msg.user { align-self:flex-end; }
-.msg.user .msg-who { color:var(--dim2); justify-content:flex-end; flex-direction:row-reverse; }
-.msg.user .msg-ts  { text-align:right; }
-.msg.user .msg-body { background:rgba(0,80,190,.07); border:1px solid rgba(0,80,190,.2); border-right:2px solid var(--ac2); color:var(--tb); }
+.msg.user{align-self:flex-end;}
+.msg.user .msg-who{color:var(--warn);text-align:right;}
+.msg.user .msg-body{
+  background:rgba(249,115,22,.05);
+  border:1px solid rgba(249,115,22,.14);
+  border-right:2px solid var(--warn);
+  color:var(--tb);
+}
+.msg.user .msg-ts{text-align:right;}
 
-.msg.jarvis { align-self:flex-start; }
-.msg.jarvis .msg-who { color:var(--ac); }
-.msg.jarvis .msg-body { background:rgba(0,10,26,.55); border:1px solid var(--bdr); border-left:2px solid var(--ac); color:var(--text); }
-.msg.jarvis.typing .msg-body::after { content:'▌'; color:var(--ac); animation:blink .7s step-end infinite; }
-.msg-activity {
-  font-size:8.5px; letter-spacing:1.5px; color:var(--dim2);
-  padding:2px 11px 5px; display:none; align-items:center; gap:5px;
+.msg.jarvis{align-self:flex-start;}
+.msg.jarvis .msg-who{color:var(--ac);}
+.msg.jarvis .msg-body{
+  background:rgba(0,212,255,.04);
+  border:1px solid rgba(0,212,255,.1);
+  border-left:2px solid var(--ac);
+  color:var(--text);
 }
-.msg-activity.active { display:flex; }
-.msg-activity::before {
-  content:''; display:inline-block; width:5px; height:5px; border-radius:50%;
-  background:var(--warn); box-shadow:0 0 6px var(--warn);
-  animation:blink-f .6s step-end infinite; flex-shrink:0;
+.msg.jarvis.typing .msg-body::after{content:'▌';color:var(--ac);animation:blink .7s step-end infinite;}
+
+.msg-activity{
+  font-size:7.5px;letter-spacing:1.5px;color:var(--dim2);
+  padding:2px 10px 4px;display:none;align-items:center;gap:5px;
+}
+.msg-activity.active{display:flex;}
+.msg-activity::before{
+  content:'';display:inline-block;width:4px;height:4px;border-radius:50%;
+  background:var(--warn);box-shadow:0 0 5px var(--warn);
+  animation:blink-f .55s step-end infinite;flex-shrink:0;
 }
 
-/* ── FOOTER ───────────────────────────── */
-footer {
-  background:var(--panel); border-top:1px solid var(--bdr);
-  display:flex; align-items:center; padding:0 15px; gap:14px;
-  font-size:8px; letter-spacing:1.5px; color:var(--dim2);
+/* chat input */
+.c-input{
+  border-top:1px solid var(--bdr);
+  background:var(--panel2);
+  padding:7px 9px;display:flex;gap:7px;align-items:center;flex-shrink:0;
 }
-.sb { display:flex; align-items:center; gap:5px; }
-.sb .v { color:var(--text); }
-.sd { width:5px; height:5px; border-radius:50%; background:var(--ok); box-shadow:0 0 5px var(--ok); }
-.ss { width:1px; height:10px; background:var(--bdr); }
-footer .sp { flex:1; }
+.c-input-wrap{flex:1;}
+#txt-in{
+  width:100%;background:rgba(0,212,255,.04);
+  border:1px solid var(--bdr2);color:var(--tb);
+  font-family:var(--font);font-size:11px;padding:6px 9px;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+#txt-in:focus{border-color:rgba(0,212,255,.35);box-shadow:0 0 0 1px rgba(0,212,255,.07);}
+#txt-in::placeholder{color:var(--dim2);}
 
-/* ── ANIMATIONS ───────────────────────── */
-@keyframes blink      { 0%,100%{opacity:1} 50%{opacity:0} }
-@keyframes blink-f    { 0%,100%{opacity:1} 50%{opacity:.2} }
-@keyframes pulse-core {
-  0%,100%{box-shadow:0 0 22px var(--ac),0 0 55px rgba(0,88,220,.5),0 0 100px rgba(0,50,180,.3)}
-  50%    {box-shadow:0 0 36px var(--ac),0 0 75px rgba(0,110,255,.6),0 0 130px rgba(0,65,200,.4)}
+.c-btn{
+  background:transparent;border:1px solid var(--bdr2);color:var(--dim2);
+  font-family:var(--font);font-size:8px;letter-spacing:1.5px;
+  padding:6px 9px;cursor:pointer;transition:all .2s;white-space:nowrap;flex-shrink:0;
 }
-@keyframes spin {
-  from{transform:translate(-50%,-50%) rotate(0deg)}
-  to  {transform:translate(-50%,-50%) rotate(360deg)}
-}
-@keyframes reactor-p {
-  0%,100%{transform:translate(-50%,-50%) scale(1)}
-  50%    {transform:translate(-50%,-50%) scale(1.1)}
-}
-@keyframes ring-exp  { 0%{transform:scale(1);opacity:.3} 100%{transform:scale(2.5);opacity:0} }
-@keyframes flash     { 0%{color:var(--ac);text-shadow:0 0 6px var(--ac)} 100%{color:var(--text);text-shadow:none} }
+.c-btn:hover{border-color:var(--ac);color:var(--ac);box-shadow:0 0 6px rgba(0,212,255,.1);}
+.c-btn:active{background:rgba(0,212,255,.07);}
+#mic-btn.active{border-color:var(--danger);color:var(--danger);box-shadow:0 0 8px rgba(239,68,68,.18);animation:blink-f .9s step-end infinite;}
 
-body.speaking .core {
-  box-shadow:0 0 40px var(--ac),0 0 90px rgba(0,130,255,.6),0 0 160px rgba(0,65,200,.4);
-  animation:pulse-core .35s ease-in-out infinite,reactor-p .35s ease-in-out infinite;
+/* ── FOOTER ─────────────────────────────── */
+footer{
+  position:relative;z-index:10;
+  background:var(--panel);border-top:1px solid var(--bdr);
+  display:flex;align-items:center;padding:0 14px;gap:0;overflow:hidden;
 }
-body.speaking .ring { opacity:1 !important; box-shadow:0 0 18px rgba(0,200,255,.3); }
-body.processing .core { box-shadow:0 0 18px var(--warn),0 0 45px rgba(255,146,0,.35); animation:none; }
-body.processing .r2  { border-color:var(--warn); opacity:.5; }
-body.processing .r3  { border-color:var(--warn); opacity:.4; }
+footer::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(0,212,255,.18),rgba(139,92,246,.12),transparent);
+}
+.ft{font-size:7px;letter-spacing:1.5px;color:var(--dim2);white-space:nowrap;padding:0 12px;}
+.ft .fv{color:var(--dim2);} /* overridden below */
+.ft-sep{width:1px;height:10px;background:var(--bdr);flex-shrink:0;}
+.ft-sp{flex:1;}
+.sd{width:5px;height:5px;border-radius:50%;background:var(--ac);box-shadow:0 0 5px var(--ac);display:inline-block;margin-right:6px;vertical-align:middle;}
+#sb-dot{transition:background .3s,box-shadow .3s;}
+#sb-model,#sb-sess,#sb-time{color:var(--text);}
+
+/* ── ANIMATIONS ─────────────────────────── */
+@keyframes orbit{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+@keyframes orbit-rev{from{transform:rotate(0deg);}to{transform:rotate(-360deg);}}
+@keyframes pulse-core{
+  0%,100%{box-shadow:0 0 22px rgba(0,212,255,.85),0 0 44px rgba(0,212,255,.35),0 0 90px rgba(0,212,255,.15),inset 0 0 18px rgba(0,212,255,.28);}
+  50%{box-shadow:0 0 32px rgba(0,212,255,1),0 0 65px rgba(0,212,255,.5),0 0 130px rgba(0,212,255,.22),inset 0 0 26px rgba(0,212,255,.38);}
+}
+@keyframes pulse-core-fast{
+  0%,100%{box-shadow:0 0 35px rgba(0,212,255,1),0 0 70px rgba(0,212,255,.6),0 0 120px rgba(0,212,255,.3),inset 0 0 24px rgba(0,212,255,.5);}
+  50%{box-shadow:0 0 50px rgba(0,212,255,1),0 0 100px rgba(0,212,255,.8),0 0 160px rgba(0,212,255,.4),inset 0 0 35px rgba(0,212,255,.65);}
+}
+@keyframes pulse-core-med{
+  0%,100%{box-shadow:0 0 28px rgba(249,115,22,.9),0 0 55px rgba(249,115,22,.4),0 0 90px rgba(249,115,22,.2),inset 0 0 18px rgba(249,115,22,.35);}
+  50%{box-shadow:0 0 40px rgba(249,115,22,1),0 0 80px rgba(249,115,22,.55),0 0 130px rgba(249,115,22,.28),inset 0 0 26px rgba(249,115,22,.48);}
+}
+@keyframes ring-exp{
+  0%{transform:scale(1);opacity:.4;}100%{transform:scale(2.6);opacity:0;}
+}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0;}}
+@keyframes blink-f{0%,100%{opacity:1;}50%{opacity:0;}}
+@keyframes materialize{
+  from{opacity:0;transform:translateY(8px) scale(.98);}
+  to{opacity:1;transform:translateY(0) scale(1);}
+}
+@keyframes scan-h{
+  0%{top:-120px;}100%{top:100vh;}
+}
+@keyframes flash-v{
+  0%,100%{color:var(--text);}50%{color:var(--ac);}
+}
 </style>
 </head>
 <body>
 
+<canvas id="neural-bg"></canvas>
+<div class="scan-sweep"></div>
+
+<!-- ── HEADER ──────────────────────────────── -->
 <header>
   <div class="h-logo">
-    <svg viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="10.5" stroke="#00c8ff" stroke-width=".7" opacity=".28"/>
-      <circle cx="12" cy="12" r="7"    stroke="#00c8ff" stroke-width="1.2" opacity=".6"/>
-      <circle cx="12" cy="12" r="3"    fill="#00c8ff"/>
-      <circle cx="12" cy="12" r="4.5"  stroke="#00c8ff" stroke-width=".5" stroke-dasharray="2.5 2" opacity=".7"/>
+    <svg viewBox="0 0 28 28" fill="none">
+      <polygon points="14,1.5 25.5,8 25.5,20 14,26.5 2.5,20 2.5,8" stroke="rgba(0,212,255,.55)" stroke-width="1" fill="rgba(0,212,255,.06)"/>
+      <polygon points="14,5 22,9.5 22,18.5 14,23 6,18.5 6,9.5" stroke="rgba(0,212,255,.25)" stroke-width=".5" fill="none"/>
+      <text x="14" y="17.5" text-anchor="middle" fill="rgba(0,212,255,.85)" font-size="9" font-family="Orbitron,sans-serif" font-weight="600">J</text>
     </svg>
     <span class="h-title">J.A.R.V.I.S.</span>
   </div>
-  <div class="h-sep"></div>
-  <div class="h-meta">
-    <span>MODEL/<span class="v" id="hdr-model">—</span></span>
-    <span>LOC/<span class="v" id="hdr-loc">—</span></span>
-    <span>MEM/<span class="v" id="hdr-mem">—</span></span>
-    <span>CONV/<span class="v" id="hdr-conv">—</span></span>
+
+  <div class="h-div"></div>
+
+  <div class="h-tags">
+    <div class="h-tag">MODEL <span class="v" id="hdr-model">—</span></div>
+    <div class="h-tag">LOC <span class="v" id="hdr-loc">—</span></div>
+    <div class="h-tag">MEM <span class="v" id="hdr-mem">—</span></div>
+    <div class="h-tag">CONV <span class="v" id="hdr-conv">—</span></div>
   </div>
+
   <div class="h-right">
-    <span class="h-time" id="hdr-time">--:--:--</span>
-    <div class="h-sep"></div>
     <div class="s-badge">
       <div class="s-dot-w">
         <div class="s-dot" id="s-dot"></div>
         <div class="s-ring"></div>
       </div>
-      <span id="s-txt" style="color:var(--dim2)">INIT</span>
+      <span id="s-txt">CONNECTING</span>
     </div>
+    <div class="h-div" style="margin:0 6px;"></div>
+    <span class="h-time" id="hdr-time">--:--:--</span>
   </div>
 </header>
 
+<!-- ── MAIN ────────────────────────────────── -->
 <main>
 
-  <!-- METRICS -->
+  <!-- LEFT: SYSTEMS -->
   <aside class="m-panel">
-    <div class="sh">CPU</div>
-    <div class="cpu-w">
-      <div class="cpu-g">
-        <svg viewBox="0 0 120 120">
-          <circle class="g-tr" cx="60" cy="60" r="46" stroke-dasharray="289 289"/>
-          <circle class="g-fi" id="cpu-arc" cx="60" cy="60" r="46" stroke-dasharray="0 289"/>
-        </svg>
-        <div class="cpu-inner">
-          <span class="cpu-n" id="cpu-n">—</span>
-          <span class="cpu-s">%</span>
+    <div class="m-hdr">
+      <span class="m-hdr-t">SYS.MONITOR</span>
+      <span class="m-hdr-s">LIVE</span>
+    </div>
+    <div class="m-body">
+
+      <!-- CPU -->
+      <div>
+        <div class="m-sec-lbl">PROCESSOR</div>
+        <div class="cpu-wrap">
+          <div class="cpu-g">
+            <svg viewBox="0 0 106 106">
+              <circle class="g-tr" cx="53" cy="53" r="44" stroke-dasharray="276 276"/>
+              <circle class="g-fi" id="cpu-arc" cx="53" cy="53" r="44" stroke-dasharray="0 276"/>
+            </svg>
+            <div class="cpu-inner">
+              <span class="cpu-n" id="cpu-n">—</span>
+              <span class="cpu-s">%</span>
+            </div>
+          </div>
+          <div class="cpu-c" id="cpu-c">— CORES</div>
+          <canvas id="sparkline" height="30" style="width:100%;display:block;margin-top:2px;"></canvas>
         </div>
       </div>
-      <div class="cpu-c" id="cpu-c">—</div>
-    </div>
 
-    <div class="sh">MEMORY</div>
-    <div class="mr">
-      <div class="mh"><span class="ml">RAM</span><span class="mv" id="ram-v">—</span></div>
-      <div class="bt"><div class="bf" id="ram-b" style="width:0%"></div></div>
-    </div>
-    <div class="mr">
-      <div class="mh"><span class="ml">SWAP</span><span class="mv" id="swp-v">—</span></div>
-      <div class="bt"><div class="bf" id="swp-b" style="width:0%"></div></div>
-    </div>
+      <!-- Memory -->
+      <div>
+        <div class="m-sec-lbl">MEMORY</div>
+        <div class="m-bar">
+          <div class="m-bar-hd"><span class="m-bar-k">RAM</span><span class="mv" id="ram-v">—</span></div>
+          <div class="bt"><div class="bf" id="ram-b" style="width:0%"></div></div>
+        </div>
+        <div class="m-bar">
+          <div class="m-bar-hd"><span class="m-bar-k">SWAP</span><span class="mv" id="swp-v">—</span></div>
+          <div class="bt"><div class="bf" id="swp-b" style="width:0%"></div></div>
+        </div>
+      </div>
 
-    <div class="sh">STORAGE</div>
-    <div class="mr">
-      <div class="mh"><span class="ml">DISK /</span><span class="mv" id="dsk-v">—</span></div>
-      <div class="bt"><div class="bf" id="dsk-b" style="width:0%"></div></div>
-    </div>
+      <!-- Storage -->
+      <div>
+        <div class="m-sec-lbl">STORAGE</div>
+        <div class="m-bar">
+          <div class="m-bar-hd"><span class="m-bar-k">DISK /</span><span class="mv" id="dsk-v">—</span></div>
+          <div class="bt"><div class="bf" id="dsk-b" style="width:0%"></div></div>
+        </div>
+      </div>
 
-    <div class="sh">NETWORK</div>
-    <div class="ng">
-      <div class="ni"><span class="nl">↑ TX</span><span class="nv" id="net-tx">—</span></div>
-      <div class="ni"><span class="nl">↓ RX</span><span class="nv" id="net-rx">—</span></div>
-    </div>
+      <!-- Network -->
+      <div>
+        <div class="m-sec-lbl">NETWORK</div>
+        <div class="ng">
+          <div class="ni"><span class="nl">↑ TX</span><span class="nv" id="net-tx">—</span></div>
+          <div class="ni"><span class="nl">↓ RX</span><span class="nv" id="net-rx">—</span></div>
+        </div>
+      </div>
 
-    <div class="sh">SYSTEM</div>
-    <div class="ig">
-      <div class="ii"><span class="il">TEMP</span><span class="iv" id="sys-temp">—</span></div>
-      <div class="ii"><span class="il">PROCS</span><span class="iv" id="sys-procs">—</span></div>
-      <div class="ii" style="grid-column:span 2"><span class="il">UPTIME</span><span class="iv" id="sys-up">—</span></div>
-    </div>
+      <!-- System -->
+      <div>
+        <div class="m-sec-lbl">SYSTEM</div>
+        <div class="ig">
+          <div class="ii"><span class="il">TEMP</span><span class="iv" id="sys-temp">—</span></div>
+          <div class="ii"><span class="il">PROCS</span><span class="iv" id="sys-procs">—</span></div>
+          <div class="ii" style="grid-column:span 2"><span class="il">UPTIME</span><span class="iv" id="sys-up">—</span></div>
+        </div>
+      </div>
 
-    <div class="sh">LOAD HISTORY</div>
-    <div class="sp-w"><canvas id="sparkline" height="36"></canvas></div>
+    </div>
   </aside>
 
-  <!-- VISUALIZER -->
+  <!-- CENTER: CORE -->
   <section class="vis">
     <div class="vc tl"></div><div class="vc tr"></div>
     <div class="vc bl"></div><div class="vc br"></div>
 
-    <div class="reactor">
+    <div class="reactor-wrap">
       <canvas id="ring-vis"></canvas>
-      <div class="ring r1"></div>
-      <div class="aseg a1"></div>
-      <div class="aseg a2"></div>
-      <div class="ring r2"></div>
-      <div class="ring r3"></div>
-      <div class="ring r4"></div>
-      <div class="ring r5"></div>
-      <div class="ring r6"></div>
-      <div class="core"></div>
+
+      <svg id="reactor-svg" viewBox="0 0 280 280" fill="none">
+        <!-- Outermost: thin dashed, very slow -->
+        <circle class="rg rg1" cx="140" cy="140" r="130"
+          stroke="rgba(0,212,255,.1)" stroke-width="1" stroke-dasharray="9 7"/>
+        <!-- Arc segments, counter, purple tint -->
+        <circle class="rg rg2" cx="140" cy="140" r="118"
+          stroke="rgba(139,92,246,.28)" stroke-width="1.5" stroke-dasharray="60 28"/>
+        <!-- Dashes, medium speed, cyan -->
+        <circle class="rg rg3" cx="140" cy="140" r="105"
+          stroke="rgba(0,212,255,.18)" stroke-width="1.5" stroke-dasharray="22 14"/>
+        <!-- Thick, fast, long arc -->
+        <circle class="rg rg4" cx="140" cy="140" r="91"
+          stroke="rgba(0,212,255,.3)" stroke-width="2" stroke-dasharray="200 72"/>
+        <!-- Innermost, fastest, very thin -->
+        <circle class="rg rg5" cx="140" cy="140" r="78"
+          stroke="rgba(0,212,255,.15)" stroke-width="1" stroke-dasharray="28 18"/>
+        <!-- Static tick marks at r=133 -->
+        <g stroke="rgba(0,212,255,.2)" stroke-width="1" stroke-linecap="round">
+          <line x1="140" y1="7" x2="140" y2="14"/>
+          <line x1="140" y1="266" x2="140" y2="273"/>
+          <line x1="7" y1="140" x2="14" y2="140"/>
+          <line x1="266" y1="140" x2="273" y2="140"/>
+          <line x1="47" y1="47" x2="52" y2="52"/>
+          <line x1="233" y1="47" x2="228" y2="52"/>
+          <line x1="47" y1="233" x2="52" y2="228"/>
+          <line x1="233" y1="233" x2="228" y2="228"/>
+        </g>
+      </svg>
+
+      <div class="reactor-core"></div>
     </div>
 
-    <div class="mode" id="mode-lbl">INITIALIZING</div>
+    <div class="state-area">
+      <div class="mode-lbl" id="mode-lbl">INITIALIZING</div>
+      <div class="mode-dots">
+        <div class="mode-dot" id="md1"></div>
+        <div class="mode-dot" id="md2"></div>
+        <div class="mode-dot" id="md3"></div>
+      </div>
+    </div>
 
     <div class="wf-wrap">
-      <div class="wf-line-t"></div>
-      <div class="wf-line-b"></div>
+      <div class="wf-line"></div>
       <canvas id="waveform" width="560" height="88"></canvas>
+      <div class="wf-line"></div>
     </div>
 
     <div class="inp-bar">
-      <button class="btn btn-mic" id="mic-btn" title="Toggle voice">🎙</button>
-      <input type="text" id="txt-input" placeholder="ENTER COMMAND OR SPEAK..." autocomplete="off" spellcheck="false"/>
-      <button class="btn btn-send" id="send-btn">SEND</button>
+      <button class="btn" id="mic-btn">MIC</button>
+      <input type="text" id="txt-input" placeholder="INITIALIZE COMMAND..." autocomplete="off" spellcheck="false"/>
+      <button class="btn" id="send-btn">TRANSMIT</button>
     </div>
   </section>
 
-  <!-- CHAT -->
+  <!-- RIGHT: COMM LOG -->
   <section class="chat-panel">
     <div class="chat-head">
-      <span>COMM LOG</span>
+      <span class="chat-head-t">COMM.LOG</span>
       <span class="chat-count" id="chat-count">1 ENTRY</span>
     </div>
-    <div class="chat-log" id="chat-log">
+    <div id="chat-log">
       <div class="msg jarvis">
         <div class="msg-who">J.A.R.V.I.S.</div>
         <div class="msg-body">Online and standing by, sir.</div>
         <div class="msg-ts" id="init-ts">--:--:--</div>
       </div>
     </div>
+    <div class="c-input">
+      <div class="c-input-wrap">
+        <input type="text" id="txt-in" placeholder="TYPE MESSAGE..." autocomplete="off" spellcheck="false"/>
+      </div>
+      <button class="c-btn" id="c-send-btn">SEND</button>
+    </div>
   </section>
 
 </main>
 
+<!-- ── FOOTER ──────────────────────────────── -->
 <footer>
-  <div class="sb"><div class="sd" id="sb-dot"></div>JARVIS&nbsp;v1.0</div>
-  <div class="ss"></div>
-  <div class="sb">API&nbsp;<span class="v">localhost:8000</span></div>
-  <div class="ss"></div>
-  <div class="sb">MODEL&nbsp;<span class="v" id="sb-model">—</span></div>
-  <div class="ss"></div>
-  <div class="sb">SESSION&nbsp;<span class="v" id="sb-sess">00:00:00</span></div>
-  <div class="sp"></div>
-  <span id="sb-time">--:--:--</span>
+  <span class="ft"><span class="sd" id="sb-dot"></span>NEXUS&nbsp;v2.0</span>
+  <div class="ft-sep"></div>
+  <span class="ft">API&nbsp;<span id="sb-api">localhost:8000</span></span>
+  <div class="ft-sep"></div>
+  <span class="ft">MODEL&nbsp;<span id="sb-model">—</span></span>
+  <div class="ft-sep"></div>
+  <span class="ft">SESSION&nbsp;<span id="sb-sess">00:00:00</span></span>
+  <div class="ft-sp"></div>
+  <span class="ft" id="sb-time">--:--:--</span>
 </footer>
 
 <script>
@@ -562,17 +640,18 @@ let audioCtx, analyser, micSource;
 let isListening=false, isSpeaking=false, isProcessing=false;
 let recognition=null, silenceTimer=null, msgCount=1;
 const sessionStart = Date.now();
-
 let prevTx=0, prevRx=0, prevNetT=0;
 let cpuHistory=[];
-const CPU_CIRC = 2*Math.PI*46; // 289.03
+const CPU_CIRC = 2*Math.PI*44; // r=44 in new SVG
 
-const wCvs  = document.getElementById('waveform');
-const wCtx  = wCvs.getContext('2d');
+const wCvs    = document.getElementById('waveform');
+const wCtx    = wCvs.getContext('2d');
 const chatLog = document.getElementById('chat-log');
-const txtIn   = document.getElementById('txt-input');
-const modeEl  = document.getElementById('mode-lbl');
-const micBtn  = document.getElementById('mic-btn');
+// Support both input fields (center + chat panel)
+const txtInput  = document.getElementById('txt-input');
+const txtIn     = document.getElementById('txt-in');
+const modeEl    = document.getElementById('mode-lbl');
+const micBtn    = document.getElementById('mic-btn');
 
 // ── CLOCK ─────────────────────────────────────────────────────
 const ft = d => d.toTimeString().slice(0,8);
@@ -588,8 +667,8 @@ setInterval(tick,1000); tick();
 document.getElementById('init-ts').textContent = ft(new Date());
 
 // ── METRICS ───────────────────────────────────────────────────
-const fmtB = b => b<1024 ? b.toFixed(0)+' B/s' : b<1048576 ? (b/1024).toFixed(1)+' KB/s' : (b/1048576).toFixed(2)+' MB/s';
-const fmtUp= s => { const d=Math.floor(s/86400),h=String(Math.floor(s%86400/3600)).padStart(2,'0'),m=String(Math.floor(s%3600/60)).padStart(2,'0'),ss=String(s%60).padStart(2,'0'); return d>0?`${d}d ${h}:${m}`:`${h}:${m}:${ss}`; };
+const fmtB  = b => b<1024 ? b.toFixed(0)+' B/s' : b<1048576 ? (b/1024).toFixed(1)+' KB/s' : (b/1048576).toFixed(2)+' MB/s';
+const fmtUp = s => { const d=Math.floor(s/86400),h=String(Math.floor(s%86400/3600)).padStart(2,'0'),m=String(Math.floor(s%3600/60)).padStart(2,'0'),ss=String(s%60).padStart(2,'0'); return d>0?`${d}d ${h}:${m}`:`${h}:${m}:${ss}`; };
 
 function setBar(id,pct) {
   const el=document.getElementById(id); if(!el) return;
@@ -608,21 +687,19 @@ async function pollMetrics() {
     const now = Date.now();
     const cpu = Math.round(d.cpu_percent);
 
-    // CPU gauge
     document.getElementById('cpu-n').textContent = cpu;
     document.getElementById('cpu-c').textContent = `${d.cpu_count} CORES`;
     const arc = document.getElementById('cpu-arc');
-    arc.setAttribute('stroke-dasharray',`${(cpu/100*CPU_CIRC).toFixed(1)} ${CPU_CIRC.toFixed(1)}`);
+    const fill = (cpu/100*CPU_CIRC).toFixed(1);
+    arc.setAttribute('stroke-dasharray',`${fill} ${CPU_CIRC.toFixed(1)}`);
     arc.setAttribute('stroke', cpu>=88?'var(--danger)':cpu>=68?'var(--warn)':'var(--ac)');
     cpuHistory.push(cpu); if(cpuHistory.length>60) cpuHistory.shift();
     drawSpark();
 
-    // RAM / SWAP / DISK
     flashVal('ram-v',`${d.mem_used_gb}/${d.mem_total_gb} GB`); setBar('ram-b',d.mem_percent);
     flashVal('swp-v',`${d.swap_percent}%`); setBar('swp-b',d.swap_percent);
     flashVal('dsk-v',`${d.disk_used_gb}/${d.disk_total_gb} GB`); setBar('dsk-b',d.disk_percent);
 
-    // Net speed
     if(prevNetT>0){
       const dt=(now-prevNetT)/1000;
       document.getElementById('net-tx').textContent = fmtB(Math.max(0,(d.net_sent_bytes-prevTx)/dt));
@@ -630,7 +707,6 @@ async function pollMetrics() {
     }
     prevTx=d.net_sent_bytes; prevRx=d.net_recv_bytes; prevNetT=now;
 
-    // Temp
     const te=document.getElementById('sys-temp');
     if(d.cpu_temp!=null){ te.textContent=d.cpu_temp.toFixed(1)+'°C'; te.className='iv'+(d.cpu_temp>=90?' crit':d.cpu_temp>=75?' hot':''); }
     else te.textContent='N/A';
@@ -640,19 +716,26 @@ async function pollMetrics() {
 }
 
 function drawSpark() {
-  const sp=document.getElementById('sparkline'), sc=sp.getContext('2d');
-  const W=sp.offsetWidth||196; sp.width=W; const H=sp.height;
+  const sp=document.getElementById('sparkline');
+  const W=sp.offsetWidth||200; sp.width=W; const H=sp.height||30;
+  const sc=sp.getContext('2d');
   sc.clearRect(0,0,W,H);
   if(cpuHistory.length<2) return;
   const step=W/(cpuHistory.length-1);
+
+  // filled area
   sc.beginPath(); sc.moveTo(0,H);
-  cpuHistory.forEach((v,i)=>sc.lineTo(i*step, H-(v/100)*H*.88));
+  cpuHistory.forEach((v,i)=>sc.lineTo(i*step,H-(v/100)*H*.9));
   sc.lineTo((cpuHistory.length-1)*step,H); sc.closePath();
-  sc.fillStyle='rgba(0,55,110,.35)'; sc.fill();
-  sc.strokeStyle='rgba(0,200,255,.72)'; sc.lineWidth=1.5;
-  sc.shadowColor='rgba(0,200,255,.45)'; sc.shadowBlur=4;
+  const grd=sc.createLinearGradient(0,0,0,H);
+  grd.addColorStop(0,'rgba(0,212,255,.2)'); grd.addColorStop(1,'rgba(0,212,255,.02)');
+  sc.fillStyle=grd; sc.fill();
+
+  // line
+  sc.strokeStyle='rgba(0,212,255,.7)'; sc.lineWidth=1.5;
+  sc.shadowColor='rgba(0,212,255,.4)'; sc.shadowBlur=3;
   sc.beginPath();
-  cpuHistory.forEach((v,i)=>{ const x=i*step,y=H-(v/100)*H*.88; i===0?sc.moveTo(x,y):sc.lineTo(x,y); });
+  cpuHistory.forEach((v,i)=>{ const x=i*step,y=H-(v/100)*H*.9; i===0?sc.moveTo(x,y):sc.lineTo(x,y); });
   sc.stroke(); sc.shadowBlur=0;
 }
 
@@ -674,8 +757,143 @@ async function pollStatus() {
   } catch(_){ setStatus('OFFLINE','offline'); }
 }
 
+// ── NEURAL NETWORK BACKGROUND ────────────────────────────────
+const nc = document.getElementById('neural-bg');
+const nCtx = nc.getContext('2d');
+let nodes=[], nFrame=0;
+const NODE_COUNT=55, MAX_DIST=150;
+
+function initNeural() {
+  nc.width=window.innerWidth; nc.height=window.innerHeight;
+  nodes=[];
+  for(let i=0;i<NODE_COUNT;i++) nodes.push({
+    x:Math.random()*nc.width, y:Math.random()*nc.height,
+    vx:(Math.random()-.5)*.28, vy:(Math.random()-.5)*.28,
+    r:Math.random()*1.4+.4
+  });
+}
+
+function drawNeural() {
+  if(nFrame++%2!==0) return; // every 2nd frame
+  nCtx.clearRect(0,0,nc.width,nc.height);
+  for(const n of nodes){
+    n.x+=n.vx; n.y+=n.vy;
+    if(n.x<0||n.x>nc.width)  n.vx*=-1;
+    if(n.y<0||n.y>nc.height) n.vy*=-1;
+  }
+  for(let i=0;i<nodes.length;i++){
+    for(let j=i+1;j<nodes.length;j++){
+      const dx=nodes[i].x-nodes[j].x, dy=nodes[i].y-nodes[j].y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<MAX_DIST){
+        const a=(1-d/MAX_DIST)*0.09;
+        nCtx.strokeStyle=`rgba(0,180,220,${a})`;
+        nCtx.lineWidth=.6;
+        nCtx.beginPath(); nCtx.moveTo(nodes[i].x,nodes[i].y); nCtx.lineTo(nodes[j].x,nodes[j].y); nCtx.stroke();
+      }
+    }
+  }
+  for(const n of nodes){
+    nCtx.fillStyle='rgba(0,180,220,.22)';
+    nCtx.beginPath(); nCtx.arc(n.x,n.y,n.r,0,Math.PI*2); nCtx.fill();
+  }
+}
+
+// ── VISUALIZATION ─────────────────────────────────────────────
+function stateRGB() {
+  if(isSpeaking)   return [0,212,255];
+  if(isProcessing) return [249,115,22];
+  if(isListening)  return [0,130,220];
+  return [14,45,70];
+}
+
+function drawRingVis() {
+  const cv=document.getElementById('ring-vis');
+  const SIZE=356; cv.width=SIZE; cv.height=SIZE;
+  const rc=cv.getContext('2d');
+  rc.clearRect(0,0,SIZE,SIZE);
+  if(!analyser) return;
+  const [R,G,B]=stateRGB();
+  const cx=SIZE/2, cy=SIZE/2, innerR=148;
+  const freqData=new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(freqData);
+  const BARS=90;
+  for(let i=0;i<BARS;i++){
+    const angle=(i/BARS)*Math.PI*2 - Math.PI/2;
+    const fi=Math.floor((i/BARS)*freqData.length*.6);
+    const v=freqData[fi]/255;
+    const barLen=3+v*36;
+    const alpha=v<0.04 ? 0.08 : 0.2+v*0.8;
+    const x1=cx+Math.cos(angle)*innerR, y1=cy+Math.sin(angle)*innerR;
+    const x2=cx+Math.cos(angle)*(innerR+barLen), y2=cy+Math.sin(angle)*(innerR+barLen);
+    rc.strokeStyle=`rgba(${R},${G},${B},${alpha})`;
+    rc.lineWidth=2;rc.lineCap='round';
+    rc.shadowColor=`rgb(${R},${G},${B})`;
+    rc.shadowBlur=v>0.2?v*10:0;
+    rc.beginPath(); rc.moveTo(x1,y1); rc.lineTo(x2,y2); rc.stroke();
+  }
+  rc.shadowBlur=0;
+}
+
+function drawLinearVis() {
+  const W=wCvs.width, H=wCvs.height, cy=H/2;
+  wCtx.clearRect(0,0,W,H);
+  if(!analyser) return;
+  const [R,G,B]=stateRGB();
+  const active=isSpeaking||isListening||isProcessing;
+  const alpha=active?1:.3;
+  const bufLen=analyser.frequencyBinCount;
+  const freqD=new Uint8Array(bufLen), timeD=new Uint8Array(bufLen);
+  analyser.getByteFrequencyData(freqD);
+  analyser.getByteTimeDomainData(timeD);
+
+  // dashed center
+  wCtx.strokeStyle=`rgba(${R},${G},${B},.14)`;
+  wCtx.lineWidth=1; wCtx.setLineDash([3,6]);
+  wCtx.beginPath(); wCtx.moveTo(0,cy); wCtx.lineTo(W,cy); wCtx.stroke();
+  wCtx.setLineDash([]);
+
+  // symmetric frequency bars
+  const useF=Math.min(bufLen,110), bw=W/useF;
+  for(let i=0;i<useF;i++){
+    const v=freqD[i]/255; if(v<0.01) continue;
+    const bh=v*cy*.88, x=i*bw;
+    const g=wCtx.createLinearGradient(0,cy-bh,0,cy+bh);
+    g.addColorStop(0,   `rgba(${R},${G},${B},${v*alpha*.9})`);
+    g.addColorStop(0.35,`rgba(${R},${G},${B},${v*alpha*.4})`);
+    g.addColorStop(0.5, `rgba(${R},${G},${B},0.02)`);
+    g.addColorStop(0.65,`rgba(${R},${G},${B},${v*alpha*.4})`);
+    g.addColorStop(1,   `rgba(${R},${G},${B},${v*alpha*.9})`);
+    wCtx.fillStyle=g;
+    wCtx.fillRect(x+.5,cy-bh,Math.max(bw-1,1),bh*2);
+  }
+
+  // waveform line
+  wCtx.strokeStyle=`rgba(${R},${G},${B},${.88*alpha})`;
+  wCtx.lineWidth=1.8;
+  wCtx.shadowColor=`rgb(${R},${G},${B})`;
+  wCtx.shadowBlur=isSpeaking?12:isListening?7:active?4:1.5;
+  wCtx.beginPath();
+  for(let i=0;i<bufLen;i++){
+    const v=(timeD[i]/128)-1;
+    const x=(i/(bufLen-1))*W, y=cy+v*cy*.82;
+    i===0?wCtx.moveTo(x,y):wCtx.lineTo(x,y);
+  }
+  wCtx.stroke(); wCtx.shadowBlur=0;
+}
+
+function drawAll() {
+  drawNeural();
+  drawRingVis();
+  drawLinearVis();
+  requestAnimationFrame(drawAll);
+}
+
 // ── INIT ──────────────────────────────────────────────────────
 async function init() {
+  initNeural();
+  window.addEventListener('resize',initNeural);
+
   await pollStatus(); setInterval(pollStatus,30000);
 
   audioCtx = new (window.AudioContext||window.webkitAudioContext)();
@@ -693,137 +911,21 @@ async function init() {
   drawAll();
 }
 
-// ── VISUALIZATION ─────────────────────────────────────────────
-function stateRGB() {
-  if(isSpeaking)   return [0,200,255];
-  if(isProcessing) return [255,146,0];
-  if(isListening)  return [0,80,200];
-  return [18,50,82];
-}
-
-// Ring visualizer around reactor
-function drawRingVis() {
-  const cv = document.getElementById('ring-vis');
-  const SIZE=304; cv.width=SIZE; cv.height=SIZE;
-  const rc=cv.getContext('2d');
-  rc.clearRect(0,0,SIZE,SIZE);
-  if(!analyser) return;
-
-  const [R,G,B]=stateRGB();
-  const cx=SIZE/2, cy=SIZE/2;
-  const innerR=126; // just outside the 240px reactor (r=120), +6px gap
-
-  const freqData = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(freqData);
-
-  const BARS=80;
-  for(let i=0;i<BARS;i++){
-    const angle=(i/BARS)*Math.PI*2 - Math.PI/2;
-    const fi=Math.floor((i/BARS)*freqData.length*0.65);
-    const v=freqData[fi]/255;
-    const barLen=3+v*42;
-    const alpha=v<0.04 ? 0.10 : 0.25+v*0.75;
-
-    const x1=cx+Math.cos(angle)*innerR, y1=cy+Math.sin(angle)*innerR;
-    const x2=cx+Math.cos(angle)*(innerR+barLen), y2=cy+Math.sin(angle)*(innerR+barLen);
-
-    rc.strokeStyle=`rgba(${R},${G},${B},${alpha})`;
-    rc.lineWidth=2.2;
-    rc.lineCap='round';
-    rc.shadowColor=`rgb(${R},${G},${B})`;
-    rc.shadowBlur=v>0.18?v*12:0;
-    rc.beginPath(); rc.moveTo(x1,y1); rc.lineTo(x2,y2); rc.stroke();
-  }
-  rc.shadowBlur=0;
-}
-
-// Linear spectrum + waveform
-function drawLinearVis() {
-  const W=wCvs.width, H=wCvs.height, cy=H/2;
-  wCtx.clearRect(0,0,W,H);
-  if(!analyser) return;
-
-  const [R,G,B]=stateRGB();
-  const active=isSpeaking||isListening||isProcessing;
-  const alpha=active?1:.35;
-
-  const bufLen=analyser.frequencyBinCount;
-  const freqD=new Uint8Array(bufLen), timeD=new Uint8Array(bufLen);
-  analyser.getByteFrequencyData(freqD);
-  analyser.getByteTimeDomainData(timeD);
-
-  // subtle grid
-  wCtx.strokeStyle=`rgba(${R},${G},${B},.045)`;
-  wCtx.lineWidth=1;
-  [.25,.75].forEach(q=>{
-    wCtx.beginPath(); wCtx.moveTo(0,H*q); wCtx.lineTo(W,H*q); wCtx.stroke();
-  });
-
-  // center dashed line
-  wCtx.strokeStyle=`rgba(${R},${G},${B},.18)`;
-  wCtx.lineWidth=1; wCtx.setLineDash([3,5]);
-  wCtx.beginPath(); wCtx.moveTo(0,cy); wCtx.lineTo(W,cy); wCtx.stroke();
-  wCtx.setLineDash([]);
-
-  // ── SYMMETRIC FREQUENCY BARS ──
-  const useF=Math.min(bufLen,100);
-  const bw=W/useF;
-  for(let i=0;i<useF;i++){
-    const v=freqD[i]/255;
-    if(v<0.008) continue;
-    const bh=v*cy*0.92;
-    const x=i*bw;
-    const g=wCtx.createLinearGradient(0,cy-bh,0,cy+bh);
-    g.addColorStop(0,   `rgba(${R},${G},${B},${v*alpha*.95})`);
-    g.addColorStop(0.32,`rgba(${R},${G},${B},${v*alpha*.45})`);
-    g.addColorStop(0.5, `rgba(${R},${G},${B},0.03)`);
-    g.addColorStop(0.68,`rgba(${R},${G},${B},${v*alpha*.45})`);
-    g.addColorStop(1,   `rgba(${R},${G},${B},${v*alpha*.95})`);
-    wCtx.fillStyle=g;
-    wCtx.fillRect(x+.5,cy-bh,Math.max(bw-1,1),bh*2);
-  }
-
-  // ── SMOOTH WAVEFORM LINE ──
-  wCtx.strokeStyle=`rgba(${R},${G},${B},${.9*alpha})`;
-  wCtx.lineWidth=2;
-  wCtx.lineJoin='round';
-  wCtx.lineCap='round';
-  wCtx.shadowColor=`rgb(${R},${G},${B})`;
-  wCtx.shadowBlur=isSpeaking?14:isListening?8:active?5:2;
-
-  wCtx.beginPath();
-  for(let i=0;i<bufLen;i++){
-    const v=(timeD[i]/128)-1;
-    const x=(i/(bufLen-1))*W, y=cy+v*cy*.85;
-    i===0?wCtx.moveTo(x,y):wCtx.lineTo(x,y);
-  }
-  wCtx.stroke();
-  wCtx.shadowBlur=0;
-}
-
-function drawAll() {
-  requestAnimationFrame(drawAll);
-  drawRingVis();
-  drawLinearVis();
-}
-
-// ── STT ───────────────────────────────────────────────────────
+// ── SPEECH RECOGNITION ────────────────────────────────────────
 function initSTT() {
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){ console.warn('[Jarvis] STT not supported'); return; }
+  if(!SR){ console.warn('[STT] Not supported'); return; }
   recognition=new SR();
   recognition.continuous=true; recognition.interimResults=true;
   recognition.lang='en-US'; recognition.maxAlternatives=1;
-  let interim='',committed='';
-
+  let committed='';
   recognition.onresult=e=>{
     if(isSpeaking||isProcessing) return;
-    interim=''; committed='';
+    let interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){
-      const t=e.results[i][0].transcript;
-      e.results[i].isFinal?committed+=t:interim+=t;
+      if(e.results[i].isFinal) committed+=e.results[i][0].transcript;
+      else interim=e.results[i][0].transcript;
     }
-    txtIn.value=committed||interim;
     clearTimeout(silenceTimer);
     if(committed.trim()) silenceTimer=setTimeout(()=>{ const m=committed.trim(); if(m){committed='';sendMsg(m);} },900);
   };
@@ -832,13 +934,50 @@ function initSTT() {
     if(isListening&&!isSpeaking&&!isProcessing)
       setTimeout(()=>{ if(isListening&&!isSpeaking&&!isProcessing) try{recognition.start()}catch(_){} },100);
   };
-  startListen();
 }
 
-function startListen() { isListening=true; micBtn.classList.add('active'); try{recognition&&recognition.start()}catch(_){} if(!isSpeaking&&!isProcessing) setMode('LISTENING','listening'); }
-function stopListen()  { isListening=false; micBtn.classList.remove('active'); try{recognition&&recognition.stop()}catch(_){} if(!isSpeaking&&!isProcessing) setMode('STANDBY',''); }
+function startListen() {
+  isListening=true; micBtn.classList.add('active');
+  document.body.classList.add('listening');
+  try{recognition&&recognition.start()}catch(_){}
+  if(!isSpeaking&&!isProcessing) setMode('LISTENING','listening');
+}
+function stopListen() {
+  isListening=false; micBtn.classList.remove('active');
+  document.body.classList.remove('listening');
+  try{recognition&&recognition.stop()}catch(_){}
+  if(!isSpeaking&&!isProcessing) setMode('STANDBY','');
+}
 
-// ── CHAT HELPERS ──────────────────────────────────────────────
+// ── STATUS / MODE ─────────────────────────────────────────────
+function setMode(t,cls) {
+  modeEl.textContent=t; modeEl.className='mode-lbl'+(cls?` ${cls}`:'');
+  const dots=[document.getElementById('md1'),document.getElementById('md2'),document.getElementById('md3')];
+  dots.forEach(d=>{ if(d){d.className='mode-dot';} });
+  if(cls==='listening'&&dots[0])  dots[0].className='mode-dot on';
+  if(cls==='processing'&&dots[0]){ dots[0].className='mode-dot proc'; if(dots[1]) dots[1].className='mode-dot proc'; }
+  if(cls==='speaking')  dots.forEach(d=>{ if(d) d.className='mode-dot speak'; });
+}
+function setStatus(t,state) {
+  document.getElementById('s-txt').textContent=t;
+  const c={online:'var(--ac)',offline:'var(--danger)',processing:'var(--warn)'}[state]||'var(--dim2)';
+  const d=document.getElementById('s-dot');
+  d.className='s-dot'+(state==='offline'?' offline':state==='processing'?' processing':'');
+  if(state==='online'){d.style.background='var(--ac)';d.style.boxShadow='0 0 8px var(--ac)';}
+  const sb=document.getElementById('sb-dot');
+  if(sb){sb.style.background=c;sb.style.boxShadow=`0 0 5px ${c}`;}
+}
+
+// ── MSG HELPERS ───────────────────────────────────────────────
+function addMsg(role,text) {
+  const w=document.createElement('div'); w.className=`msg ${role}`;
+  const who=document.createElement('div'); who.className='msg-who'; who.textContent=role==='user'?'YOU':'J.A.R.V.I.S.';
+  const body=document.createElement('div'); body.className='msg-body'; body.textContent=text;
+  const ts=document.createElement('div'); ts.className='msg-ts'; ts.textContent=ft(new Date());
+  w.append(who,body,ts);
+  chatLog.appendChild(w); chatLog.scrollTop=chatLog.scrollHeight;
+  msgCount++; updCount();
+}
 function mkTyping() {
   const w=document.createElement('div'); w.className='msg jarvis typing';
   const who=document.createElement('div'); who.className='msg-who'; who.textContent='J.A.R.V.I.S.';
@@ -852,17 +991,20 @@ function mkTyping() {
 }
 function updTyping(w,t) { const b=w.querySelector('.msg-body'); if(b) b.textContent=t; chatLog.scrollTop=chatLog.scrollHeight; }
 function finalTyping(w,t) { w.classList.remove('typing'); const b=w.querySelector('.msg-body'); if(b) b.textContent=t||'Done, sir.'; chatLog.scrollTop=chatLog.scrollHeight; }
+function updCount() { document.getElementById('chat-count').textContent=`${msgCount} ${msgCount===1?'ENTRY':'ENTRIES'}`; }
+
 function donePro() {
   isProcessing=false; document.body.classList.remove('processing');
   if(isListening){ setTimeout(()=>{ if(isListening&&!isSpeaking&&!isProcessing) try{recognition&&recognition.start()}catch(_){} },300); setMode('LISTENING','listening'); }
   else setMode('STANDBY','');
 }
-function updCount() { document.getElementById('chat-count').textContent=`${msgCount} ${msgCount===1?'ENTRY':'ENTRIES'}`; }
 
 // ── SEND ──────────────────────────────────────────────────────
 function sendMsg(text) {
   text=text.trim(); if(!text||isProcessing) return;
-  txtIn.value=''; isProcessing=true; clearTimeout(silenceTimer);
+  if(txtInput) txtInput.value='';
+  if(txtIn) txtIn.value='';
+  isProcessing=true; clearTimeout(silenceTimer);
   try{recognition&&recognition.stop()}catch(_){}
   addMsg('user',text);
   setMode('PROCESSING','processing'); setStatus('PROCESSING','processing');
@@ -898,11 +1040,10 @@ function sendMsg(text) {
 // ── AUDIO ─────────────────────────────────────────────────────
 function b64buf(b64) { const b=atob(b64),u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return u.buffer.slice(0); }
 
-
 async function playAudio(b64) {
   try{
     isSpeaking=true; setMode('SPEAKING','speaking');
-    document.body.classList.add('speaking','speaking');
+    document.body.classList.add('speaking');
     document.body.classList.remove('processing');
     try{recognition&&recognition.stop()}catch(_){}
     const ab=await audioCtx.decodeAudioData(b64buf(b64));
@@ -920,31 +1061,15 @@ async function playAudio(b64) {
     console.error('[audio]',err); isSpeaking=false;
     document.body.classList.remove('speaking');
     if(micSource) try{micSource.connect(analyser)}catch(_){}
-    setMode('LISTENING','listening');
+    setMode('STANDBY','');
   }
-}
-
-// ── UI HELPERS ────────────────────────────────────────────────
-function addMsg(role,text) {
-  const w=document.createElement('div'); w.className=`msg ${role}`;
-  const who=document.createElement('div'); who.className='msg-who'; who.textContent=role==='user'?'YOU':'J.A.R.V.I.S.';
-  const body=document.createElement('div'); body.className='msg-body'; body.textContent=text;
-  const ts=document.createElement('div'); ts.className='msg-ts'; ts.textContent=ft(new Date());
-  w.append(who,body,ts);
-  chatLog.appendChild(w); chatLog.scrollTop=chatLog.scrollHeight;
-  msgCount++; updCount();
-}
-function setMode(t,cls) { modeEl.textContent=t; modeEl.className='mode'+(cls?` ${cls}`:''); }
-function setStatus(t,state) {
-  document.getElementById('s-txt').textContent=t;
-  const c={online:'var(--ac)',offline:'var(--danger)',processing:'var(--warn)'}[state]||'var(--dim2)';
-  const d=document.getElementById('s-dot'); d.style.background=c; d.style.boxShadow=`0 0 10px ${c}`;
-  const sb=document.getElementById('sb-dot'); if(sb){sb.style.background=c; sb.style.boxShadow=`0 0 5px ${c}`;}
 }
 
 // ── EVENTS ────────────────────────────────────────────────────
 micBtn.addEventListener('click',()=>{ audioCtx?.state==='suspended'&&audioCtx.resume(); isListening?stopListen():startListen(); });
-document.getElementById('send-btn').addEventListener('click',()=>{ audioCtx?.state==='suspended'&&audioCtx.resume(); sendMsg(txtIn.value); });
+document.getElementById('send-btn').addEventListener('click',()=>{ audioCtx?.state==='suspended'&&audioCtx.resume(); sendMsg(txtInput.value); });
+document.getElementById('c-send-btn').addEventListener('click',()=>{ audioCtx?.state==='suspended'&&audioCtx.resume(); sendMsg(txtIn.value); });
+txtInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){audioCtx?.state==='suspended'&&audioCtx.resume(); sendMsg(txtInput.value);} });
 txtIn.addEventListener('keydown',e=>{ if(e.key==='Enter'){audioCtx?.state==='suspended'&&audioCtx.resume(); sendMsg(txtIn.value);} });
 document.addEventListener('click',()=>{ audioCtx?.state==='suspended'&&audioCtx.resume(); },{once:true});
 

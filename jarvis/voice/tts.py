@@ -125,6 +125,7 @@ class TextToSpeech:
     def __init__(self, speaker_wav: Optional[str] = None) -> None:
         engine = os.getenv("TTS_ENGINE", "xtts").lower()
         speaker_wav = speaker_wav or os.getenv("SPEAKER_WAV") or None
+        self.speed = float(os.getenv("SPEECH_SPEED", "1.22"))
 
         if engine == "piper":
             voice = os.getenv("PIPER_VOICE", "en_GB-alan-medium")
@@ -132,14 +133,14 @@ class TextToSpeech:
         else:
             self._engine = _XTTSEngine(speaker_wav=speaker_wav)
 
-        print("[TTS] TTS engine ready.")
+        print(f"[TTS] TTS engine ready. Speed: {self.speed}x")
 
     def speak(self, text: str) -> None:
         try:
             if not text or not text.strip():
                 return
             audio, sr = self._engine.synthesize(text)
-            sd.play(audio, samplerate=sr)
+            sd.play(audio, samplerate=int(sr * self.speed))
             sd.wait()
         except Exception as e:
             print(f"[TTS] Error in speak: {e}")
@@ -154,7 +155,7 @@ class TextToSpeech:
             with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(sr)
+                wf.setframerate(int(sr * self.speed))
                 wf.writeframes(audio_int16.tobytes())
             print(f"[TTS] Audio bytes generated ({len(buf.getvalue())} bytes).")
             return buf.getvalue()
