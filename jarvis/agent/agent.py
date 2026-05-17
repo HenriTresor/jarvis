@@ -214,6 +214,9 @@ class JarvisAgent:
             return "Checking calendar..."
         if name == "create_calendar_event":
             return "Creating event..."
+        if name == "set_alarm":
+            t = args.get("time", "")
+            return f"Setting alarm for {t}..." if t else "Setting alarm..."
         return "Processing..."
 
     def _simple_synthesis(

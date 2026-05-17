@@ -107,6 +107,7 @@ class ToolExecutor:
                 "get_unread_emails": self._get_unread_emails,
                 "get_upcoming_events": self._get_upcoming_events,
                 "create_calendar_event": self._create_calendar_event,
+                "set_alarm": self._set_alarm,
                 "capture_image": self._capture_image,
                 "describe_image": self._describe_image,
                 "detect_motion": self._detect_motion,
@@ -763,6 +764,91 @@ class ToolExecutor:
         except Exception as e:
             print(f"[ToolExecutor] Calendar create error: {e}")
             return f"Calendar create error: {e}"
+
+    def _set_alarm(self, time: str, label: str = "Alarm") -> str:
+        """
+        Schedule a real alarm: plays a sound + desktop notification at the given time.
+        Spawns a detached Python watcher process — survives Jarvis restarts.
+        """
+        try:
+            # Parse the time into a full ISO datetime
+            iso_time: Optional[str] = None
+            clean = time.strip()
+
+            # Already an ISO datetime
+            if "T" in clean or (len(clean) > 8 and "-" in clean):
+                try:
+                    iso_time = datetime.fromisoformat(clean.replace("Z", "")).isoformat()
+                except ValueError:
+                    pass
+
+            # HH:MM or H:MM (24h or 12h)
+            if not iso_time:
+                for fmt in ("%H:%M", "%I:%M %p", "%I:%M%p", "%H%M"):
+                    try:
+                        t = datetime.strptime(clean.upper(), fmt)
+                        now = datetime.now()
+                        candidate = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+                        if candidate <= now:
+                            from datetime import timedelta
+                            candidate += timedelta(days=1)
+                        iso_time = candidate.isoformat()
+                        break
+                    except ValueError:
+                        continue
+
+            if not iso_time:
+                return f"Could not parse time '{time}'. Use formats like '08:00', '20:00', or '2026-05-18T08:00:00'."
+
+            label_safe = label.replace('"', "'").replace("\\", "")
+            sounds = [
+                "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
+                "/usr/share/sounds/gnome/default/alerts/sonar.ogg",
+                "/usr/share/sounds/freedesktop/stereo/complete.oga",
+            ]
+            sounds_py = repr(sounds)
+
+            script = f"""import time as _t, subprocess as _sp, datetime as _dt, os as _os
+target = _dt.datetime.fromisoformat("{iso_time}")
+secs = (target - _dt.datetime.now()).total_seconds()
+if secs > 0:
+    _t.sleep(secs)
+_sp.run(["notify-send", "-u", "critical", "-t", "60000", "\\u23f0 JARVIS", "{label_safe}"], check=False)
+for snd in {sounds_py}:
+    if _os.path.exists(snd) and _sp.run(["paplay", snd], capture_output=True).returncode == 0:
+        break
+_os.remove(_os.path.abspath(__file__))
+"""
+            alarm_dir = os.path.expanduser("~/.local/share/jarvis/alarms")
+            os.makedirs(alarm_dir, exist_ok=True)
+            script_path = os.path.join(alarm_dir, f"alarm_{int(datetime.now().timestamp()*1000)}.py")
+            with open(script_path, "w") as f:
+                f.write(script)
+
+            subprocess.Popen(
+                ["python3", script_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,  # detach so it outlives Jarvis
+            )
+            print(f"[ToolExecutor] Alarm '{label}' scheduled for {iso_time}")
+
+            # Also record in calendar
+            events = self._load_calendar()
+            events.append({
+                "id": str(int(datetime.now().timestamp() * 1000)),
+                "title": f"⏰ {label}",
+                "start": iso_time,
+                "end": iso_time,
+                "type": "alarm",
+                "created": datetime.now().isoformat(),
+            })
+            self._save_calendar(events)
+
+            return f"Alarm '{label}' set for {self._fmt_dt(iso_time)}."
+        except Exception as e:
+            print(f"[ToolExecutor] Alarm error: {e}")
+            return f"Alarm error: {e}"
 
     def _capture_image(self, **_) -> str:
         """

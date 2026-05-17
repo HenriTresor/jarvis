@@ -350,6 +350,40 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "set_alarm",
+            "description": (
+                "Set a real alarm that fires a desktop notification and plays a sound "
+                "at the specified time. Works even if this chat window is closed. "
+                "Use this for 'wake me up at 7', 'alarm in 30 minutes', "
+                "'remind me at 8 PM', 'set a timer for X'. "
+                "Prefer this over create_calendar_event for time-sensitive reminders."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "time": {
+                        "type": "string",
+                        "description": (
+                            "When to trigger the alarm. Accepts: "
+                            "'HH:MM' (24h, e.g. '07:30'), "
+                            "'HH:MM AM/PM' (e.g. '8:00 PM'), "
+                            "or full ISO datetime (e.g. '2026-05-18T08:00:00')."
+                        )
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "What the alarm is for (e.g. 'Wake up', 'Take medicine', 'Meeting')",
+                        "default": "Alarm"
+                    }
+                },
+                "required": ["time"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
             "name": "capture_image",
             "description": (
                 "Capture an image from the webcam. "
