@@ -31,7 +31,7 @@ class LLMClient:
         m.strip()
         for m in os.getenv(
             "GROQ_FALLBACK_CHAIN",
-            "llama-3.1-8b-instant,gemma2-9b-it,mixtral-8x7b-32768",
+            "qwen/qwen3-32b,openai/gpt-oss-20b,groq/compound-mini,gemma2-9b-it,mixtral-8x7b-32768,llama-3.1-8b-instant",
         ).split(",")
         if m.strip()
     ]
@@ -166,8 +166,17 @@ class LLMClient:
                         return result
                     except Exception as fe:
                         last_error = str(fe)
-                        if "rate_limit_exceeded" not in last_error:
-                            break  # Non-rate-limit error — stop trying
+                        # Continue chain on rate limits OR "too large" errors
+                        # (next model may accept shorter context).
+                        # Stop only on unrecoverable errors (auth, bad request, etc.)
+                        recoverable = (
+                            "rate_limit_exceeded" in last_error
+                            or "too large" in last_error
+                            or "reduce your message size" in last_error
+                            or "request_too_large" in last_error
+                        )
+                        if not recoverable:
+                            break
 
                 # All models exhausted — extract retry time and respond in character
                 retry_msg = self._parse_retry_time(last_error)

@@ -981,7 +981,7 @@ class ToolExecutor:
         except Exception as e:
             return f"Failed to retrieve facts: {e}"
 
-    def _open_application(self, app: str, args: str = "") -> str:
+    def _open_application(self, app: str, args: str = "", **_) -> str:
         """
         Launch any installed application.
 

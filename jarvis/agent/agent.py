@@ -130,6 +130,9 @@ class JarvisAgent:
         "done, sir", "completed, sir", "it is done", "all done",
         "currently muted", "currently set to", "the current power profile is",
         "the actual current", "now playing:", "currently playing:",
+        "is now open", "is now playing", "has been opened", "has been launched",
+        "is now set", "is now enabled", "is now disabled", "is now running",
+        "has been turned", "has been switched", "has been changed",
     ]
 
     _REFUSAL_PHRASES = [
@@ -171,10 +174,11 @@ class JarvisAgent:
         tool_calls: List[Dict[str, Any]] = []
         seen: set = set()
         patterns = [
-            r'<function=(\w+)>(.*?)</function>',
-            r'<function=(\w+)\((.*?)\)>\s*</function>',
-            r'/(\w+)>\s*(\{[^}]+\})',           # /tool_name> {"arg": "val"}
-            r'`(\w+)`\s*\n\s*(\{[^}]+\})',      # `tool_name`\n{json}
+            r'<function=(\w+)>(.*?)</function>',            # <function=name>json</function>
+            r'<function=(\w+)\((.*?)\)>\s*</function>',    # <function=name(json)></function>
+            r'<function>(\w+)\s*(\{[^}]+\})</function>',   # <function>name{json}</function>
+            r'/(\w+)>\s*(\{[^}]+\})',                       # /tool_name> {json}
+            r'`(\w+)`\s*\n\s*(\{[^}]+\})',                 # `tool_name`\n{json}
         ]
         for pattern in patterns:
             for match in re.finditer(pattern, content, re.DOTALL):
@@ -210,8 +214,9 @@ class JarvisAgent:
         """Remove embedded tool call syntax from content before showing to user."""
         content = re.sub(r'<function=\w+>.*?</function>', '', content, flags=re.DOTALL)
         content = re.sub(r'<function=\w+\(.*?\)>\s*</function>', '', content, flags=re.DOTALL)
-        # Strip orphaned <function= tags left by truncated outputs
-        content = re.sub(r'<function=\w+>.*$', '', content, flags=re.DOTALL)
+        content = re.sub(r'<function>\w+\s*\{[^}]+\}</function>', '', content)
+        # Strip orphaned <function tags left by truncated outputs
+        content = re.sub(r'<function[=>]?\w*>.*$', '', content, flags=re.DOTALL)
         # Strip /tool_name> {json} format
         content = re.sub(r'/\w+>\s*\{[^}]+\}', '', content)
         # Strip `tool_name`\n{json} format
