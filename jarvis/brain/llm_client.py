@@ -85,9 +85,8 @@ class LLMClient:
                 "name": "Cerebras",
                 "client": _OAI(api_key=cerebras_key, base_url="https://api.cerebras.ai/v1"),
                 "models": [
-                    os.getenv("CEREBRAS_MODEL", "llama-3.3-70b"),
-                    "llama-3.1-70b",
-                    "llama-3.1-8b",
+                    os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct-2507"),
+                    "llama3.1-8b",
                 ],
             })
 
@@ -101,7 +100,8 @@ class LLMClient:
                 ),
                 "models": [
                     os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-                    "gemini-1.5-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash-lite",
                 ],
             })
 
