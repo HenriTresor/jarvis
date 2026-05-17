@@ -48,6 +48,13 @@ class LLMClient:
 
     MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+    # 8B and smaller models are unreliable with tool calling — they hallucinate
+    # tool invocations from conversation context. Strip tools for these models.
+    NO_TOOLS_MODELS: set = {
+        "llama-3.1-8b-instant",
+        "llama3.1-8b",
+    }
+
     # Only tool/function-calling capable models confirmed on Groq's free tier.
     # Ordered strongest → weakest. All confirmed tool-callable on Groq free tier.
     GROQ_CHAIN: List[str] = [
@@ -194,6 +201,13 @@ class LLMClient:
                 continue
             tried.add(model)
             kwargs["model"] = model
+            if model in self.NO_TOOLS_MODELS and tools:
+                kwargs.pop("tools", None)
+                kwargs.pop("tool_choice", None)
+                print(f"[LLM] Tools disabled for small model {model}.")
+            elif tools and "tools" not in kwargs:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
             is_first = model == self.GROQ_CHAIN[0]
             try:
                 response = self.groq.chat.completions.create(**kwargs)
@@ -225,9 +239,11 @@ class LLMClient:
                     "model": model,
                     "messages": kwargs["messages"],
                 }
-                if tools:
+                if tools and model not in self.NO_TOOLS_MODELS:
                     alt_kwargs["tools"] = tools
                     alt_kwargs["tool_choice"] = "auto"
+                elif model in self.NO_TOOLS_MODELS and tools:
+                    print(f"[LLM] Tools disabled for small model {model}.")
                 try:
                     print(f"[LLM] Trying {pname} / {model}...")
                     response = pclient.chat.completions.create(**alt_kwargs)

@@ -90,7 +90,7 @@ class MemoryManager:
 
             # Initialize SQLite for structured facts
             self.sql_conn: sqlite3.Connection = sqlite3.connect(
-                f"{db_path}/facts.db"
+                f"{db_path}/facts.db", check_same_thread=False
             )
             self._init_sql()
             print(f"[Memory] SQLite database initialized.")
