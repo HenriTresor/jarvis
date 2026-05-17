@@ -1,8 +1,9 @@
 """
 LLM Client for J.A.R.V.I.S. Brain
 
-Wraps Groq for fast cloud inference using Llama 3.3 70B (or any Groq model).
-Supports both single-call and streaming interactions.
+Primary provider: Groq (Llama 3.3 70B and fallbacks).
+Secondary providers: Cerebras and Google Gemini (OpenAI-compatible endpoints).
+Falls through all providers before giving up.
 """
 
 import os
@@ -14,22 +15,34 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _extract_tool_calls(msg) -> Optional[List[Dict[str, Any]]]:
+    if not msg.tool_calls:
+        return None
+    return [
+        {
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        }
+        for tc in msg.tool_calls
+    ]
+
+
 class LLMClient:
     """
-    Wraps Groq cloud inference with an automatic fallback model chain.
+    Multi-provider LLM client with automatic fallback.
 
-    Tries each model in FALLBACK_CHAIN in order when rate limits are hit.
-    When all models are exhausted, returns a Jarvis-style message with the
-    actual retry time parsed from the Groq error response.
+    Order: Groq models → Cerebras → Gemini.
+    Each provider is skipped silently if its API key is absent.
     """
 
     MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-    # Ordered list of fallback models to try when the primary is rate-limited.
-    # Each has a different free-tier quota so they fail independently.
-    # Only models that support tool/function calling.
-    # groq/compound and llama-prompt-guard-* are classifiers — they reject tool calls with 400.
-    FALLBACK_CHAIN: List[str] = [
+    # Only tool/function-calling capable models confirmed on Groq's free tier.
+    GROQ_CHAIN: List[str] = [
         m.strip()
         for m in os.getenv(
             "GROQ_FALLBACK_CHAIN",
@@ -43,18 +56,56 @@ class LLMClient:
         if m.strip()
     ]
 
+    # Kept for backwards compatibility — callers that read FALLBACK_CHAIN still work.
+    FALLBACK_CHAIN = GROQ_CHAIN
 
     def __init__(self) -> None:
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
-            raise RuntimeError(
-                "[LLM] GROQ_API_KEY not set. Add it to your .env file."
-            )
-        self.client: Groq = Groq(api_key=api_key)
-        print(f"[LLM] Connected to Groq. Model: {self.MODEL}")
+            raise RuntimeError("[LLM] GROQ_API_KEY not set. Add it to your .env file.")
+        self.groq = Groq(api_key=api_key)
+
+        # Optional secondary providers — imported lazily so missing package doesn't crash.
+        self._alt_providers: List[Dict[str, Any]] = []
+        self._init_alt_providers()
+
+        providers = ["Groq"] + [p["name"] for p in self._alt_providers]
+        print(f"[LLM] Providers: {', '.join(providers)}. Primary model: {self.MODEL}")
+
+    def _init_alt_providers(self) -> None:
+        try:
+            from openai import OpenAI as _OAI
+        except ImportError:
+            print("[LLM] openai package not installed — Cerebras/Gemini unavailable.")
+            return
+
+        cerebras_key = os.getenv("CEREBRAS_API_KEY")
+        if cerebras_key:
+            self._alt_providers.append({
+                "name": "Cerebras",
+                "client": _OAI(api_key=cerebras_key, base_url="https://api.cerebras.ai/v1"),
+                "models": [
+                    os.getenv("CEREBRAS_MODEL", "llama-3.3-70b"),
+                    "llama-3.1-70b",
+                    "llama-3.1-8b",
+                ],
+            })
+
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            self._alt_providers.append({
+                "name": "Gemini",
+                "client": _OAI(
+                    api_key=gemini_key,
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                ),
+                "models": [
+                    os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+                    "gemini-1.5-flash",
+                ],
+            })
 
     def _clean_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Strip non-standard keys before sending to the Groq API."""
         cleaned = []
         for msg in messages:
             role = msg.get("role")
@@ -77,143 +128,120 @@ class LLMClient:
                 })
         return cleaned
 
+    def _is_retryable(self, err: str) -> bool:
+        e = err.lower()
+        return (
+            "rate_limit_exceeded" in e or "429" in err
+            or "413" in err
+            or "too large" in e
+            or "reduce your message size" in e
+            or "not supported" in e
+            or "failed to template" in e
+            or "404" in err
+        )
+
+    def _is_unrecoverable(self, err: str) -> bool:
+        e = err.lower()
+        return any(t in e for t in ("invalid api key", "invalid_api_key", "authentication", "unauthorized", "forbidden"))
+
+    def _trim_messages(self, kwargs: Dict[str, Any], label: str) -> None:
+        msgs = kwargs["messages"]
+        system_msgs = [m for m in msgs if m.get("role") == "system"]
+        non_system = [m for m in msgs if m.get("role") != "system"]
+        kwargs["messages"] = system_msgs + non_system[-6:]
+        print(f"[LLM] Trimmed history to last 6 messages for {label}.")
+
+    def _build_result(self, msg, model: str) -> Dict[str, Any]:
+        result: Dict[str, Any] = {"content": msg.content or "", "model": model}
+        tcs = _extract_tool_calls(msg)
+        if tcs:
+            result["tool_calls"] = tcs
+            print(f"[LLM] {len(tcs)} tool call(s) returned.")
+        return result
+
     def chat(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         system_prompt: str = "",
     ) -> Dict[str, Any]:
-        """
-        Single, non-streaming call to the LLM.
+        formatted: List[Dict[str, Any]] = []
+        if system_prompt:
+            formatted.append({"role": "system", "content": system_prompt})
+        formatted.extend(self._clean_messages(messages))
 
-        Returns a dict with:
-          - "content": assistant text response
-          - "tool_calls": list of tool call dicts (if any)
-          - "model": model name
-        """
-        kwargs: Dict[str, Any] = {"model": self.MODEL, "messages": []}
-        try:
-            formatted: List[Dict[str, Any]] = []
-            if system_prompt:
-                formatted.append({"role": "system", "content": system_prompt})
-            formatted.extend(self._clean_messages(messages))
+        kwargs: Dict[str, Any] = {"model": self.MODEL, "messages": formatted}
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+            print(f"[LLM] Tools available: {len(tools)}")
 
-            kwargs = {"model": self.MODEL, "messages": formatted}
-            if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_choice"] = "auto"
-                print(f"[LLM] Tools available: {len(tools)}")
+        print(f"[LLM] Sending request (messages: {len(messages)})")
 
-            print(f"[LLM] Sending request (messages: {len(messages)})")
-            response = self.client.chat.completions.create(**kwargs)
-            msg = response.choices[0].message
+        # ── Groq chain ────────────────────────────────────────────────────────
+        last_error = ""
+        tried: set = set()
+        for model in self.GROQ_CHAIN:
+            if model in tried:
+                continue
+            tried.add(model)
+            kwargs["model"] = model
+            is_first = model == self.GROQ_CHAIN[0]
+            try:
+                response = self.groq.chat.completions.create(**kwargs)
+                print(f"[LLM] {'Response' if is_first else f'Fallback {model}'} received.")
+                return self._build_result(response.choices[0].message, model)
+            except Exception as e:
+                last_error = str(e)
+                is_too_large = "413" in last_error or "too large" in last_error.lower() or "reduce your message size" in last_error.lower()
+                is_rate_limit = "429" in last_error or "rate_limit" in last_error
+                if is_rate_limit:
+                    print(f"[LLM] Rate limit on {model}. Trying next...")
+                elif is_too_large:
+                    print(f"[LLM] Request too large for {model}. Trimming and trying next...")
+                    self._trim_messages(kwargs, model)
+                else:
+                    print(f"[LLM] {model} error: {last_error[:100]}. Trying next...")
+                if self._is_unrecoverable(last_error):
+                    break
+                if not self._is_retryable(last_error):
+                    print(f"[LLM] Non-retryable error from Groq: {last_error[:120]}")
+                    break
 
-            result: Dict[str, Any] = {
-                "content": msg.content or "",
-                "model": self.MODEL,
-            }
-
-            if msg.tool_calls:
-                result["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ]
-                print(f"[LLM] {len(msg.tool_calls)} tool call(s) returned.")
-
-            print(f"[LLM] Response received.")
-            return result
-
-        except Exception as e:
-            err_str = str(e)
-            last_error = err_str
-
-            # Retry on rate limits, request-too-large, and model-specific errors.
-            # (400 "unsupported feature" is also retried — just with the next model.)
-            retryable = (
-                "rate_limit_exceeded" in err_str
-                or "429" in err_str
-                or "413" in err_str
-                or "too large" in err_str.lower()
-                or "reduce your message size" in err_str.lower()
-                or "not supported" in err_str.lower()
-            )
-            if retryable:
-                tried = {kwargs.get("model", self.MODEL)}
-                for fallback in self.FALLBACK_CHAIN:
-                    if fallback in tried:
-                        continue
-                    tried.add(fallback)
-                    is_rate_limit = "429" in last_error or "rate_limit" in last_error
-                    is_too_large  = "413" in last_error or "too large" in last_error.lower() or "reduce your message size" in last_error.lower()
-                    if is_rate_limit:
-                        print(f"[LLM] Rate limit hit. Trying fallback: {fallback}...")
-                    elif is_too_large:
-                        print(f"[LLM] Request too large. Trimming and trying: {fallback}...")
-                    else:
-                        print(f"[LLM] Model error. Trying fallback: {fallback}...")
-                    try:
-                        kwargs["model"] = fallback
-                        if is_too_large:
-                            msgs = kwargs["messages"]
-                            system_msgs = [m for m in msgs if m.get("role") == "system"]
-                            non_system  = [m for m in msgs if m.get("role") != "system"]
-                            kwargs["messages"] = system_msgs + non_system[-6:]
-                            print(f"[LLM] Trimmed history to last 6 messages for {fallback}.")
-                        response = self.client.chat.completions.create(**kwargs)
-                        msg = response.choices[0].message
-                        result: Dict[str, Any] = {
-                            "content": msg.content or "",
-                            "model": fallback,
-                        }
-                        if msg.tool_calls:
-                            result["tool_calls"] = [
-                                {
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.function.name,
-                                        "arguments": tc.function.arguments,
-                                    },
-                                }
-                                for tc in msg.tool_calls
-                            ]
-                        print(f"[LLM] Fallback {fallback} responded.")
-                        return result
-                    except Exception as fe:
-                        last_error = str(fe)
-                        print(f"[LLM] Fallback {fallback} failed: {last_error[:120]}")
-                        unrecoverable = any(t in last_error.lower() for t in (
-                            "invalid api key", "invalid_api_key",
-                            "authentication", "unauthorized", "forbidden",
-                        ))
-                        if unrecoverable:
-                            break
-
-                retry_msg = self._parse_retry_time(last_error)
-                print(f"[LLM] All models exhausted. {retry_msg}")
-                return {
-                    "content": (
-                        f"All systems are currently throttled, sir. "
-                        f"{retry_msg} I'll be fully operational again shortly."
-                    ),
-                    "model": "none",
+        # ── Alternative providers ─────────────────────────────────────────────
+        for provider in self._alt_providers:
+            pname = provider["name"]
+            pclient = provider["client"]
+            for model in provider["models"]:
+                alt_kwargs: Dict[str, Any] = {
+                    "model": model,
+                    "messages": kwargs["messages"],
                 }
+                if tools:
+                    alt_kwargs["tools"] = tools
+                    alt_kwargs["tool_choice"] = "auto"
+                try:
+                    print(f"[LLM] Trying {pname} / {model}...")
+                    response = pclient.chat.completions.create(**alt_kwargs)
+                    print(f"[LLM] {pname} / {model} responded.")
+                    return self._build_result(response.choices[0].message, f"{pname}/{model}")
+                except Exception as e:
+                    last_error = str(e)
+                    print(f"[LLM] {pname}/{model} failed: {last_error[:120]}")
+                    if self._is_unrecoverable(last_error):
+                        break
 
-            print(f"[LLM] Error in chat: {e}")
-            return {
-                "content": "Systems encountered an unexpected error, sir. Standing by.",
-                "model": self.MODEL,
-            }
+        retry_msg = self._parse_retry_time(last_error)
+        print(f"[LLM] All providers exhausted. {retry_msg}")
+        return {
+            "content": (
+                f"All systems are currently throttled, sir. "
+                f"{retry_msg} I'll be fully operational again shortly."
+            ),
+            "model": "none",
+        }
 
     def _parse_retry_time(self, error_str: str) -> str:
-        """Extract the retry-after time from a Groq rate limit error string."""
         match = re.search(r"Please try again in ([^\.']+)", error_str)
         if match:
             return f"Groq requests a {match.group(1).strip()} cooldown."
@@ -224,49 +252,57 @@ class LLMClient:
         messages: List[Dict[str, Any]],
         system_prompt: str = "",
     ) -> Generator[str, None, None]:
-        """
-        Streaming call to the LLM. Yields text chunks as they arrive.
-
-        Note: streaming does not support tool calls — use chat() for tool use.
-        """
+        """Streaming call — no tool calls. Falls through all providers."""
         formatted: List[Dict[str, Any]] = []
         if system_prompt:
             formatted.append({"role": "system", "content": system_prompt})
         formatted.extend(self._clean_messages(messages))
 
-        models_to_try = [self.MODEL] + self.FALLBACK_CHAIN
         last_error = ""
 
-        for model in models_to_try:
+        # Groq
+        for model in self.GROQ_CHAIN:
             try:
-                print(f"[LLM] Streaming request via {model} (messages: {len(messages)})")
-                stream = self.client.chat.completions.create(
-                    model=model,
-                    messages=formatted,
-                    stream=True,
+                print(f"[LLM] Streaming via Groq/{model}...")
+                stream = self.groq.chat.completions.create(
+                    model=model, messages=formatted, stream=True
                 )
                 for chunk in stream:
                     content = chunk.choices[0].delta.content
                     if content:
                         yield content
-                print(f"[LLM] Streaming complete.")
+                print("[LLM] Streaming complete.")
                 return
             except Exception as e:
                 last_error = str(e)
-                unrecoverable = any(t in last_error.lower() for t in (
-                    "invalid api key", "invalid_api_key",
-                    "authentication", "unauthorized", "forbidden",
-                ))
-                if unrecoverable:
-                    print(f"[LLM] Auth error on {model} — stopping chain.")
-                    yield f"Authentication error, sir. Please check the API key."
+                if self._is_unrecoverable(last_error):
+                    yield "Authentication error, sir. Please check the API key."
                     return
-                print(f"[LLM] {model} failed: {last_error[:120]} — trying next...")
-                continue
+                print(f"[LLM] Groq/{model} stream failed: {last_error[:100]} — trying next...")
+
+        # Alternative providers
+        for provider in self._alt_providers:
+            pname = provider["name"]
+            pclient = provider["client"]
+            for model in provider["models"]:
+                try:
+                    print(f"[LLM] Streaming via {pname}/{model}...")
+                    stream = pclient.chat.completions.create(
+                        model=model, messages=formatted, stream=True
+                    )
+                    for chunk in stream:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            yield content
+                    print(f"[LLM] {pname}/{model} streaming complete.")
+                    return
+                except Exception as e:
+                    last_error = str(e)
+                    if self._is_unrecoverable(last_error):
+                        yield "Authentication error, sir. Please check the API key."
+                        return
+                    print(f"[LLM] {pname}/{model} stream failed: {last_error[:100]} — trying next...")
 
         retry_msg = self._parse_retry_time(last_error)
-        print(f"[LLM] All streaming models rate-limited. {retry_msg}")
-        yield (
-            f"All systems are currently throttled, sir. "
-            f"{retry_msg} I'll be back online shortly."
-        )
+        print(f"[LLM] All streaming providers exhausted. {retry_msg}")
+        yield f"All systems are currently throttled, sir. {retry_msg} I'll be back online shortly."

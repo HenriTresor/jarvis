@@ -42,3 +42,4 @@ python-multipart
 # Optional: Task Queue (Celery + Redis)
 # celery
 # redis
+openai>=1.0.0
