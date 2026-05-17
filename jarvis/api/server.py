@@ -493,6 +493,10 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     if isinstance(item, Exception):
                         await websocket.send_json({"error": str(item), "done": True})
                         break
+                    if isinstance(item, dict):
+                        # Structured event (e.g. tool_activity) — forward as-is, not text
+                        await websocket.send_json(item)
+                        continue
                     full_text += item
                     await websocket.send_json({"chunk": item, "done": False})
 

@@ -359,6 +359,16 @@ main {
 .msg.jarvis .msg-who { color:var(--ac); }
 .msg.jarvis .msg-body { background:rgba(0,10,26,.55); border:1px solid var(--bdr); border-left:2px solid var(--ac); color:var(--text); }
 .msg.jarvis.typing .msg-body::after { content:'▌'; color:var(--ac); animation:blink .7s step-end infinite; }
+.msg-activity {
+  font-size:8.5px; letter-spacing:1.5px; color:var(--dim2);
+  padding:2px 11px 5px; display:none; align-items:center; gap:5px;
+}
+.msg-activity.active { display:flex; }
+.msg-activity::before {
+  content:''; display:inline-block; width:5px; height:5px; border-radius:50%;
+  background:var(--warn); box-shadow:0 0 6px var(--warn);
+  animation:blink-f .6s step-end infinite; flex-shrink:0;
+}
 
 /* ── FOOTER ───────────────────────────── */
 footer {
@@ -832,9 +842,10 @@ function stopListen()  { isListening=false; micBtn.classList.remove('active'); t
 function mkTyping() {
   const w=document.createElement('div'); w.className='msg jarvis typing';
   const who=document.createElement('div'); who.className='msg-who'; who.textContent='J.A.R.V.I.S.';
+  const act=document.createElement('div'); act.className='msg-activity';
   const body=document.createElement('div'); body.className='msg-body'; body.textContent='';
   const ts=document.createElement('div'); ts.className='msg-ts'; ts.textContent=ft(new Date());
-  w.append(who,body,ts);
+  w.append(who,act,body,ts);
   chatLog.appendChild(w); chatLog.scrollTop=chatLog.scrollHeight;
   msgCount++; updCount();
   return w;
@@ -863,8 +874,17 @@ function sendMsg(text) {
   ws.onmessage=e=>{
     try{
       const d=JSON.parse(e.data);
-      if(d.chunk){full+=d.chunk; updTyping(jw,full);}
-if(d.error){finalTyping(jw,full||'System error, sir.'); setStatus('ERROR','offline'); donePro(); return;}
+      if(d.type==='tool_activity'){
+        const a=jw.querySelector('.msg-activity');
+        if(a){ a.textContent=d.label; a.classList.add('active'); chatLog.scrollTop=chatLog.scrollHeight; }
+        return;
+      }
+      if(d.chunk){
+        const a=jw.querySelector('.msg-activity');
+        if(a) a.classList.remove('active');
+        full+=d.chunk; updTyping(jw,full);
+      }
+      if(d.error){finalTyping(jw,full||'System error, sir.'); setStatus('ERROR','offline'); donePro(); return;}
       if(d.done){
         finalTyping(jw,full); pollStatus(); setStatus('ONLINE','online');
         if(d.audio){document.body.classList.remove('processing'); isProcessing=false; playAudio(d.audio);}

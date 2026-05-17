@@ -164,8 +164,8 @@ class JarvisAgent:
         "detect_motion",
     }
 
-    def _pre_execution_message(self, tool_calls: List[Dict[str, Any]]) -> str:
-        """Return a short spoken line to yield immediately before tools execute."""
+    def _tool_activity_label(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """Return a short UI status label for what tools are about to run."""
         if not tool_calls:
             return ""
         tc = tool_calls[0]
@@ -177,30 +177,42 @@ class JarvisAgent:
 
         app = args.get("app", args.get("application", ""))
         action = args.get("action", "")
-        query = args.get("query", "")
+        query = args.get("query", args.get("city", ""))
 
         if name == "open_application":
-            return f"Opening {app} now."
+            return f"Opening {app}..." if app else "Opening application..."
         if name == "web_search":
-            return f"Searching for {query}."
+            return f"Searching: {query[:40]}..." if query else "Searching the web..."
         if name == "get_weather":
-            return f"Checking the weather."
+            return f"Fetching weather for {query}..." if query else "Fetching weather..."
         if name == "spotify_control":
-            return {"next": "Skipping.", "previous": "Going back.",
-                    "pause": "Pausing.", "play": "Resuming.",
-                    "volume_up": "Turning it up.", "volume_down": "Turning it down."
-                    }.get(action, "On it.")
+            return {"next": "Skipping track...", "previous": "Going back...",
+                    "pause": "Pausing playback...", "play": "Resuming playback...",
+                    "volume_up": "Raising volume...", "volume_down": "Lowering volume..."
+                    }.get(action, "Controlling Spotify...")
         if name == "system_volume":
-            return {"mute": "Muting.", "unmute": "Unmuting.",
-                    "set": f"Setting volume to {args.get('value', '')}%."
-                    }.get(action, "Adjusting volume.")
+            return {"mute": "Muting audio...", "unmute": "Unmuting audio...",
+                    "set": f"Setting volume to {args.get('value', '')}%..."
+                    }.get(action, "Adjusting volume...")
         if name == "run_code":
-            return "Running that now."
+            return "Executing code..."
         if name == "capture_image":
-            return "Looking now."
+            return "Capturing image..."
+        if name == "describe_image":
+            return "Analysing image..."
         if name == "get_datetime":
-            return ""  # instant, no need to announce
-        return "On it."
+            return ""
+        if name == "smart_home_control":
+            return f"Controlling {args.get('device', 'device')}..."
+        if name == "send_email":
+            return "Composing email..."
+        if name == "get_unread_emails":
+            return "Checking emails..."
+        if name == "get_upcoming_events":
+            return "Checking calendar..."
+        if name == "create_calendar_event":
+            return "Creating event..."
+        return "Processing..."
 
     def _simple_synthesis(
         self, tool_calls: List[Dict[str, Any]], tool_results: List[str], had_errors: bool
@@ -911,6 +923,11 @@ class JarvisAgent:
                     for i, word in enumerate(words):
                         yield word + ("" if i == len(words) - 1 else " ")
                     return
+
+                # Signal the UI what's about to happen (visual only, no audio)
+                label = self._tool_activity_label(tool_calls)
+                if label:
+                    yield {"type": "tool_activity", "label": label}
 
                 # Execute tool calls
                 self.conversation_history.append({
