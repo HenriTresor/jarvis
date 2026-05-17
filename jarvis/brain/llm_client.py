@@ -15,6 +15,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _strip_thinking(text: str) -> str:
+    """Remove <think>...</think> and <thinking>...</thinking> reasoning blocks."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def _extract_tool_calls(msg) -> Optional[List[Dict[str, Any]]]:
     if not msg.tool_calls:
         return None
@@ -153,7 +160,7 @@ class LLMClient:
         print(f"[LLM] Trimmed history to last 6 messages for {label}.")
 
     def _build_result(self, msg, model: str) -> Dict[str, Any]:
-        result: Dict[str, Any] = {"content": msg.content or "", "model": model}
+        result: Dict[str, Any] = {"content": _strip_thinking(msg.content or ""), "model": model}
         tcs = _extract_tool_calls(msg)
         if tcs:
             result["tool_calls"] = tcs
@@ -248,6 +255,34 @@ class LLMClient:
             return f"Groq requests a {match.group(1).strip()} cooldown."
         return "Retry time unknown."
 
+    def _stream_chunks(self, stream) -> Generator[str, None, None]:
+        """Yield stream chunks, suppressing any <think>...</think> blocks."""
+        buf = ""
+        in_think = False
+        for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if not content:
+                continue
+            buf += content
+            while True:
+                if in_think:
+                    end = buf.find("</think>")
+                    if end == -1:
+                        buf = ""  # discard — still inside thinking block
+                        break
+                    buf = buf[end + len("</think>"):]
+                    in_think = False
+                else:
+                    start = buf.find("<think>")
+                    if start == -1:
+                        yield buf
+                        buf = ""
+                        break
+                    if start > 0:
+                        yield buf[:start]
+                    buf = buf[start + len("<think>"):]
+                    in_think = True
+
     def chat_stream(
         self,
         messages: List[Dict[str, Any]],
@@ -268,10 +303,7 @@ class LLMClient:
                 stream = self.groq.chat.completions.create(
                     model=model, messages=formatted, stream=True
                 )
-                for chunk in stream:
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        yield content
+                yield from self._stream_chunks(stream)
                 print("[LLM] Streaming complete.")
                 return
             except Exception as e:
@@ -291,10 +323,7 @@ class LLMClient:
                     stream = pclient.chat.completions.create(
                         model=model, messages=formatted, stream=True
                     )
-                    for chunk in stream:
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            yield content
+                    yield from self._stream_chunks(stream)
                     print(f"[LLM] {pname}/{model} streaming complete.")
                     return
                 except Exception as e:
