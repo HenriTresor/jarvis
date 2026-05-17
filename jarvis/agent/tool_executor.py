@@ -39,7 +39,8 @@ class ToolExecutor:
     def __init__(
         self,
         home_assistant_url: Optional[str] = None,
-        ha_token: Optional[str] = None
+        ha_token: Optional[str] = None,
+        memory=None
     ) -> None:
         """
         Initialize the tool executor.
@@ -54,6 +55,7 @@ class ToolExecutor:
         try:
             self.ha_url: Optional[str] = home_assistant_url or os.getenv("HOME_ASSISTANT_URL") or None
             self.ha_token: Optional[str] = ha_token or os.getenv("HOME_ASSISTANT_TOKEN") or None
+            self.memory = memory  # injected from JarvisAgent
             camera_index: int = int(os.getenv("CAMERA_INDEX", "0"))
 
             # Lazy-import vision to avoid hard dependency on cv2/ollama at startup
@@ -108,6 +110,13 @@ class ToolExecutor:
                 "capture_image": self._capture_image,
                 "describe_image": self._describe_image,
                 "detect_motion": self._detect_motion,
+                "system_settings": self._system_settings,
+                "find_and_open": self._find_and_open,
+                "system_volume": self._system_volume,
+                "save_user_fact": self._save_user_fact,
+                "get_user_facts": self._get_user_facts,
+                "open_application": self._open_application,
+                "spotify_control": self._spotify_control,
             }
 
             handler: Optional[Any] = handlers.get(tool_name)
@@ -116,8 +125,8 @@ class ToolExecutor:
                 print(f"[ToolExecutor] {error_msg}")
                 return f"Error: {error_msg}"
 
-            # Execute the handler
-            result: str = handler(**args)
+            # Execute the handler (args may be None for no-param tools)
+            result: str = handler(**(args or {}))
             print(f"[ToolExecutor] {tool_name} executed successfully")
             return result
         except Exception as e:
@@ -231,7 +240,7 @@ class ToolExecutor:
             print(f"[ToolExecutor] Error in _get_weather: {e}")
             return f"Weather error: {e}"
 
-    def _get_datetime(self) -> str:
+    def _get_datetime(self, **_) -> str:
         """
         Get current date and time.
 
@@ -279,31 +288,73 @@ class ToolExecutor:
             print(f"[ToolExecutor] Error in _run_code: {e}")
             return f"Code execution error: {e}"
 
-    def _read_file(self, path: str) -> str:
+    def _read_file(self, path: str, search_hint: str = "") -> str:
         """
-        Read a text file from ~/jarvis_files.
+        Read any text file on the system.
+
+        Resolution order:
+        1. Absolute path (/...) → used directly
+        2. Home-relative (~/...) → expanded
+        3. Bare relative → ~/jarvis_files/<path>
+        4. Not found → search home dir for the filename;
+           search_hint (e.g. "jarvis") narrows to paths containing that word.
 
         Args:
-            path: Relative file path
+            path: File path or filename to locate
+            search_hint: Optional keyword to prefer matching search results
 
         Returns:
-            File contents (first 2000 chars) or error message
+            File contents (first 2000 chars), or candidate list, or error
         """
         try:
             if not path:
                 return "Error: No file path provided"
 
-            safe_base: str = os.path.expanduser("~/jarvis_files")
-            full_path: str = os.path.join(safe_base, path.lstrip("/"))
+            if path.startswith("/") or path.startswith("~"):
+                full_path: str = os.path.expanduser(path)
+            else:
+                safe_base: str = os.path.expanduser("~/jarvis_files")
+                full_path = os.path.join(safe_base, path.lstrip("/"))
 
+            # ── Filesystem search fallback ────────────────────────────────
             if not os.path.exists(full_path):
-                return f"Error: File not found: {path}"
+                filename = os.path.basename(path) or path
+                search_root = os.path.expanduser("~")
+                print(f"[ToolExecutor] '{full_path}' not found — searching for '{filename}'")
+                result = subprocess.run(
+                    ["find", search_root, "-maxdepth", "8",
+                     "-name", filename,
+                     "-not", "-path", "*/node_modules/*",
+                     "-not", "-path", "*/__pycache__/*"],
+                    capture_output=True, text=True, timeout=10
+                )
+                matches = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+
+                if not matches:
+                    return f"Error: '{filename}' not found anywhere under {search_root}."
+
+                # Prefer matches that contain the search hint
+                if search_hint:
+                    preferred = [m for m in matches if search_hint.lower() in m.lower()]
+                    if preferred:
+                        matches = preferred
+
+                if len(matches) == 1:
+                    full_path = matches[0]
+                    print(f"[ToolExecutor] Found: {full_path}")
+                else:
+                    listing = "\n".join(matches[:10])
+                    return (
+                        f"Found {len(matches)} files named '{filename}':\n{listing}\n"
+                        f"Specify which one to read (use the full path)."
+                    )
+            # ─────────────────────────────────────────────────────────────
 
             with open(full_path, "r") as f:
                 content: str = f.read()
 
-            print(f"[ToolExecutor] Read file: {path}")
-            return content[:2000]
+            print(f"[ToolExecutor] Read file: {full_path}")
+            return f"[File: {full_path}]\n\n{content[:2000]}"
         except Exception as e:
             print(f"[ToolExecutor] Error in _read_file: {e}")
             return f"File read error: {e}"
@@ -342,9 +393,10 @@ class ToolExecutor:
 
     def _smart_home_control(
         self,
-        device: str,
-        action: str,
-        value: Optional[int] = None
+        device: str = "",
+        action: str = "",
+        value: Optional[int] = None,
+        **kwargs
     ) -> str:
         """
         Control smart home devices via Home Assistant.
@@ -358,6 +410,19 @@ class ToolExecutor:
             Result message
         """
         try:
+            # Redirect misrouted system calls (8b model sometimes calls smart_home
+            # for OS settings like power_mode, wifi, volume)
+            power_actions = ("set_power_mode", "set_profile", "power_profile")
+            if action in power_actions or kwargs.get("mode") or kwargs.get("profile"):
+                mode = kwargs.get("mode") or kwargs.get("profile") or str(value or "")
+                return self._system_settings(
+                    setting="power_profile", action="set", value=mode
+                )
+            wifi_actions = ("enable_wifi", "disable_wifi", "wifi_on", "wifi_off")
+            if action in wifi_actions:
+                new_action = "on" if "on" in action or "enable" in action else "off"
+                return self._system_settings(setting="wifi", action=new_action)
+
             if not device or not action:
                 return "Error: Missing device or action"
 
@@ -529,7 +594,7 @@ class ToolExecutor:
             print(f"[ToolExecutor] Error in _create_calendar_event: {e}")
             return f"Calendar event error: {e}"
 
-    def _capture_image(self) -> str:
+    def _capture_image(self, **_) -> str:
         """
         Capture an image from webcam.
 
@@ -583,7 +648,7 @@ class ToolExecutor:
             print(f"[ToolExecutor] Error in _describe_image: {e}")
             return f"Image analysis error: {e}"
 
-    def _detect_motion(self) -> str:
+    def _detect_motion(self, **_) -> str:
         """Detect motion on webcam."""
         try:
             if not self.vision:
@@ -594,3 +659,647 @@ class ToolExecutor:
         except Exception as e:
             print(f"[ToolExecutor] Error in _detect_motion: {e}")
             return f"Motion detection error: {e}"
+
+    def _system_settings(self, setting: str, action: str, value: str = "", **_) -> str:
+        """Control OS-level system settings via xrandr, nmcli, bluetoothctl, gsettings."""
+        try:
+            import re as _re
+            # Normalize setting aliases
+            setting = setting.lower().strip()
+            if setting in ("theme", "color_scheme", "color-scheme", "appearance"):
+                setting = "dark_mode"
+            print(f"[ToolExecutor] System settings: {setting} → {action}")
+
+            # ── Brightness (xrandr) ───────────────────────────────────────
+            if setting == "brightness":
+                if action == "get":
+                    out = subprocess.run(
+                        ["xrandr", "--verbose"], capture_output=True, text=True
+                    ).stdout
+                    m = _re.search(r"Brightness:\s*([\d.]+)", out)
+                    pct = int(float(m.group(1)) * 100) if m else "unknown"
+                    return f"Screen brightness is at {pct}%."
+                # action="set" uses the value field; otherwise action IS the value
+                raw = value if action == "set" else action
+                try:
+                    val = float(raw.rstrip("%")) / 100
+                    val = max(0.1, min(1.0, val))
+                except ValueError:
+                    return "Provide a brightness value (e.g. '80' or '80%')."
+                # Apply to all connected outputs
+                outputs = _re.findall(r"^(\S+) connected", subprocess.run(
+                    ["xrandr"], capture_output=True, text=True
+                ).stdout, _re.MULTILINE)
+                for output in outputs:
+                    subprocess.run(
+                        ["xrandr", "--output", output, "--brightness", str(val)],
+                        capture_output=True
+                    )
+                return f"Screen brightness set to {int(val * 100)}%."
+
+            # ── Wi-Fi (nmcli) ─────────────────────────────────────────────
+            elif setting == "wifi":
+                if action == "get":
+                    out = subprocess.run(
+                        ["nmcli", "-t", "-f", "WIFI", "radio"], capture_output=True, text=True
+                    ).stdout.strip()
+                    return f"Wi-Fi is {out}."
+                elif action in ("on", "off"):
+                    subprocess.run(["nmcli", "radio", "wifi", action], capture_output=True)
+                    return f"Wi-Fi turned {action}."
+                elif action == "toggle":
+                    state = subprocess.run(
+                        ["nmcli", "-t", "-f", "WIFI", "radio"],
+                        capture_output=True, text=True
+                    ).stdout.strip()
+                    new = "off" if state == "enabled" else "on"
+                    subprocess.run(["nmcli", "radio", "wifi", new], capture_output=True)
+                    return f"Wi-Fi toggled {new}."
+                return f"Unknown wifi action '{action}'."
+
+            # ── Bluetooth (bluetoothctl) ───────────────────────────────────
+            elif setting == "bluetooth":
+                if action == "get":
+                    out = subprocess.run(
+                        ["bluetoothctl", "show"], capture_output=True, text=True
+                    ).stdout
+                    powered = "on" if "Powered: yes" in out else "off"
+                    return f"Bluetooth is {powered}."
+                elif action in ("on", "off"):
+                    subprocess.run(
+                        ["bluetoothctl", "power", action], capture_output=True
+                    )
+                    return f"Bluetooth powered {action}."
+                elif action == "toggle":
+                    out = subprocess.run(
+                        ["bluetoothctl", "show"], capture_output=True, text=True
+                    ).stdout
+                    new = "off" if "Powered: yes" in out else "on"
+                    subprocess.run(["bluetoothctl", "power", new], capture_output=True)
+                    return f"Bluetooth toggled {new}."
+                return f"Unknown bluetooth action '{action}'."
+
+            # ── Dark / Light Mode (gsettings) ─────────────────────────────
+            elif setting == "dark_mode":
+                if action == "get":
+                    scheme = subprocess.run(
+                        ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                        capture_output=True, text=True
+                    ).stdout.strip()
+                    mode = "dark" if "dark" in scheme else "light"
+                    return f"Color scheme is currently {mode} mode."
+                elif action in ("on", "dark"):
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.interface",
+                                    "color-scheme", "prefer-dark"], capture_output=True)
+                    return "Dark mode enabled."
+                elif action in ("off", "light"):
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.interface",
+                                    "color-scheme", "prefer-light"], capture_output=True)
+                    return "Light mode enabled."
+                elif action == "set":
+                    # value field: "dark"/"on" → dark mode, "light"/"off" → light mode
+                    v = value.lower().strip()
+                    if v in ("dark", "on"):
+                        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface",
+                                        "color-scheme", "prefer-dark"], capture_output=True)
+                        return "Dark mode enabled."
+                    elif v in ("light", "off"):
+                        subprocess.run(["gsettings", "set", "org.gnome.desktop.interface",
+                                        "color-scheme", "prefer-light"], capture_output=True)
+                        return "Light mode enabled."
+                    return f"Unknown dark_mode value '{value}'. Use 'dark' or 'light'."
+                elif action == "toggle":
+                    scheme = subprocess.run(
+                        ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                        capture_output=True, text=True
+                    ).stdout.strip()
+                    new = "prefer-light" if "dark" in scheme else "prefer-dark"
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.interface",
+                                    "color-scheme", new], capture_output=True)
+                    return f"Switched to {'dark' if 'dark' in new else 'light'} mode."
+                return f"Unknown dark_mode action '{action}'."
+
+            # ── Night Light (gsettings) ───────────────────────────────────
+            elif setting == "night_light":
+                key = "org.gnome.settings-daemon.plugins.color"
+                if action == "get":
+                    state = subprocess.run(
+                        ["gsettings", "get", key, "night-light-enabled"],
+                        capture_output=True, text=True
+                    ).stdout.strip()
+                    return f"Night light is {'on' if state == 'true' else 'off'}."
+                elif action in ("on", "enable"):
+                    subprocess.run(["gsettings", "set", key, "night-light-enabled", "true"],
+                                   capture_output=True)
+                    return "Night light enabled."
+                elif action in ("off", "disable"):
+                    subprocess.run(["gsettings", "set", key, "night-light-enabled", "false"],
+                                   capture_output=True)
+                    return "Night light disabled."
+                elif action == "toggle":
+                    state = subprocess.run(
+                        ["gsettings", "get", key, "night-light-enabled"],
+                        capture_output=True, text=True
+                    ).stdout.strip()
+                    new = "false" if state == "true" else "true"
+                    subprocess.run(["gsettings", "set", key, "night-light-enabled", new],
+                                   capture_output=True)
+                    return f"Night light {'disabled' if new == 'false' else 'enabled'}."
+                return f"Unknown night_light action '{action}'."
+
+            # ── Power Profile (tuned-adm) ─────────────────────────────────
+            elif setting == "power_profile":
+                profile_map: Dict[str, str] = {
+                    "balanced": "balanced",
+                    "performance": "throughput-performance",
+                    "power-saver": "powersave",
+                    "powersave": "powersave",
+                    "power saving": "powersave",
+                    "battery": "balanced-battery",
+                    "battery saving": "balanced-battery",
+                    "battery-saving": "balanced-battery",
+                    "latency": "latency-performance",
+                    "desktop": "desktop",
+                }
+                if action == "get":
+                    out = subprocess.run(
+                        ["tuned-adm", "active"], capture_output=True, text=True
+                    )
+                    return f"Power profile: {out.stdout.strip()}."
+                # action="set" uses value field; otherwise action IS the profile name
+                raw_profile = value if action == "set" else action
+                profile = profile_map.get(raw_profile.lower(), raw_profile)
+
+                def _run_tuned(use_sudo: bool) -> subprocess.CompletedProcess:
+                    cmd = ["tuned-adm", "profile", profile]
+                    if use_sudo:
+                        sudo_pass = os.getenv("SUDO_PASSWORD", "")
+                        if sudo_pass:
+                            return subprocess.run(
+                                ["sudo", "-S"] + cmd,
+                                input=sudo_pass + "\n",
+                                capture_output=True, text=True
+                            )
+                        return subprocess.run(
+                            ["sudo"] + cmd, capture_output=True, text=True
+                        )
+                    return subprocess.run(cmd, capture_output=True, text=True)
+
+                # Try without sudo first (works if user has polkit rights)
+                r = _run_tuned(use_sudo=False)
+                if r.returncode == 0:
+                    return f"Power profile set to '{profile}'."
+                # Try with sudo (uses SUDO_PASSWORD from .env if set)
+                r2 = _run_tuned(use_sudo=True)
+                if r2.returncode == 0:
+                    return f"Power profile set to '{profile}'."
+                return f"Could not set power profile: {(r2.stderr or r.stderr).strip()}"
+
+            return f"Unknown setting '{setting}'."
+        except Exception as e:
+            print(f"[ToolExecutor] Error in _system_settings: {e}")
+            return f"System settings error: {e}"
+
+    def _find_and_open(self, query: str, open_with: str, search_path: str = "") -> str:
+        """Search filesystem for a directory/file and open it in the specified app."""
+        try:
+            import glob as _glob
+            search_root = os.path.expanduser(search_path.strip() or "~")
+            print(f"[ToolExecutor] Searching '{search_root}' for '{query}' → open with {open_with}")
+
+            # Run find, limit depth to keep it fast
+            result = subprocess.run(
+                ["find", search_root, "-maxdepth", "6",
+                 "-iname", f"*{query}*",
+                 "-not", "-path", "*/.*",        # skip hidden dirs
+                 "-not", "-path", "*/node_modules/*",
+                 "-not", "-path", "*/__pycache__/*"],
+                capture_output=True, text=True, timeout=10
+            )
+            matches = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+
+            if not matches:
+                return f"No files or directories matching '{query}' found under {search_root}."
+
+            # Prefer exact name matches and directories first
+            def rank(p: str) -> int:
+                name = os.path.basename(p).lower()
+                exact = name == query.lower()
+                is_dir = os.path.isdir(p)
+                return (0 if exact else 1) + (0 if is_dir else 2)
+
+            matches.sort(key=rank)
+            target = matches[0]
+
+            # Resolve the app command
+            app_map: Dict[str, list] = {
+                "vscode": ["code", target],
+                "code":   ["code", target],
+                "dolphin": ["dolphin", target],
+                "nautilus": ["nautilus", target],
+                "files": ["nautilus", target],
+                "terminal": ["gnome-terminal", f"--working-directory={target}"],
+                "default": ["xdg-open", target],
+            }
+            cmd = app_map.get(open_with.lower())
+            if not cmd:
+                # Treat open_with as a raw binary
+                cmd = [open_with, target]
+
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            others = len(matches) - 1
+            note = f" ({others} other match{'es' if others != 1 else ''} found)" if others else ""
+            return f"Opened '{target}' in {open_with}{note}."
+        except subprocess.TimeoutExpired:
+            return f"Search timed out. Try a more specific query or narrower search_path."
+        except Exception as e:
+            print(f"[ToolExecutor] Error in _find_and_open: {e}")
+            return f"Find and open error: {e}"
+
+    def _system_volume(self, action: str, level: Optional[int] = None) -> str:
+        """Control OS-level system audio volume via pactl."""
+        try:
+            import re as _re
+            print(f"[ToolExecutor] System volume: {action} {level or ''}")
+
+            if action == "set":
+                if level is None:
+                    return "Error: provide a volume level (0-100)."
+                level = max(0, min(100, level))
+                subprocess.run(
+                    ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{level}%"],
+                    check=True, capture_output=True
+                )
+                return f"System volume set to {level}%."
+
+            elif action == "get":
+                out = subprocess.run(
+                    ["pactl", "get-sink-volume", "@DEFAULT_SINK@"],
+                    capture_output=True, text=True
+                ).stdout
+                m = _re.search(r"(\d+)%", out)
+                pct = m.group(1) if m else "unknown"
+                return f"System volume is at {pct}%."
+
+            elif action == "mute":
+                subprocess.run(
+                    ["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1"],
+                    check=True, capture_output=True
+                )
+                return "System audio muted."
+
+            elif action == "unmute":
+                subprocess.run(
+                    ["pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"],
+                    check=True, capture_output=True
+                )
+                return "System audio unmuted."
+
+            else:
+                return f"Unknown action '{action}'."
+        except Exception as e:
+            print(f"[ToolExecutor] Error in _system_volume: {e}")
+            return f"System volume error: {e}"
+
+    def _save_user_fact(self, key: str, value: str) -> str:
+        try:
+            if not self.memory:
+                return "Memory system unavailable."
+            self.memory.set_fact(key, value)
+            return f"Noted: {key} = {value}"
+        except Exception as e:
+            return f"Failed to save fact: {e}"
+
+    def _get_user_facts(self, **_) -> str:
+        try:
+            if not self.memory:
+                return "Memory system unavailable."
+            facts = self.memory.get_all_facts()
+            if not facts:
+                return "No facts stored about you yet."
+            return "\n".join(f"{k}: {v}" for k, v in facts.items())
+        except Exception as e:
+            return f"Failed to retrieve facts: {e}"
+
+    def _open_application(self, app: str, args: str = "") -> str:
+        """
+        Launch any installed application.
+
+        Tries (in order): known alias → PATH binary → flatpak → snap → xdg-open.
+
+        Args:
+            app: Application name (e.g. 'firefox', 'spotify', 'vlc')
+            args: Optional extra arguments/URL to pass
+
+        Returns:
+            Launch status message
+        """
+        try:
+            if not app:
+                return "Error: No application specified"
+
+            print(f"[ToolExecutor] Opening application: {app} {args}".strip())
+
+            # Common name → command aliases
+            aliases: Dict[str, str] = {
+                "spotify": "flatpak run com.spotify.Client",
+                "discord": "flatpak run com.discordapp.Discord",
+                "chrome": "google-chrome",
+                "google chrome": "google-chrome",
+                "chromium": "chromium-browser",
+                "brave": "brave-browser",
+                "firefox": "firefox",
+                "browser": "__default_browser__",
+                "terminal": "gnome-terminal",
+                "files": "nautilus",
+                "explorer": "nautilus",
+                "vscode": "code",
+                "vs code": "code",
+                "editor": "gedit",
+                "calculator": "gnome-calculator",
+                "steam": "flatpak run com.valvesoftware.Steam",
+                "obs": "flatpak run com.obsproject.Studio",
+                "vlc": "vlc",
+                "gimp": "gimp",
+                "inkscape": "inkscape",
+            }
+
+            # Map .desktop file names → browser commands (for xdg-settings output)
+            desktop_to_cmd: Dict[str, str] = {
+                "google-chrome.desktop": "google-chrome",
+                "chromium-browser.desktop": "chromium-browser",
+                "chromium.desktop": "chromium",
+                "brave-browser.desktop": "brave-browser",
+                "firefox.desktop": "firefox",
+                "org.mozilla.firefox.desktop": "firefox",
+                "microsoft-edge.desktop": "microsoft-edge",
+            }
+
+            def _default_browser() -> str:
+                """Return the system default browser command, falling back to chrome."""
+                try:
+                    desktop = subprocess.run(
+                        ["xdg-settings", "get", "default-web-browser"],
+                        capture_output=True, text=True, timeout=3
+                    ).stdout.strip()
+                    cmd = desktop_to_cmd.get(desktop)
+                    if cmd:
+                        return cmd
+                except Exception:
+                    pass
+                # Fallback: first installed browser in priority order
+                for candidate in ("google-chrome", "firefox", "chromium-browser", "brave-browser"):
+                    try:
+                        r = subprocess.run(["which", candidate], capture_output=True, timeout=2)
+                        if r.returncode == 0:
+                            return candidate
+                    except Exception:
+                        pass
+                return "xdg-open"
+
+            # Incognito / private-window: detect keyword in app or args
+            app_lower = app.lower()
+            incognito = (
+                "incognito" in app_lower or "private" in app_lower
+                or "incognito" in args.lower() or "private" in args.lower()
+            )
+            # Strip incognito keywords from args
+            clean_args = (
+                args
+                .replace("--incognito", "").replace("incognito", "")
+                .replace("--private-window", "").replace("private", "")
+                .replace("mode", "").strip()
+            )
+
+            # Resolve app name (strip incognito keywords first)
+            base_app = app_lower.replace("incognito", "").replace("private", "").strip()
+            resolved = aliases.get(base_app, base_app or app)
+
+            # Resolve __default_browser__ placeholder or generic browser requests
+            if resolved == "__default_browser__" or (
+                incognito and base_app in ("", "browser", "web browser", "the browser")
+            ):
+                resolved = _default_browser()
+
+            # Choose the correct incognito flag for the browser
+            if incognito:
+                incognito_flag = "--private-window" if "firefox" in resolved else "--incognito"
+                args_parts = [incognito_flag] + ([clean_args] if clean_args else [])
+            else:
+                args_parts = clean_args.split() if clean_args else (args.split() if args else [])
+
+            cmd_parts = resolved.split() + args_parts
+
+            # 1. Try the resolved/aliased command directly
+            try:
+                subprocess.Popen(
+                    cmd_parts,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                return f"Launched {app}."
+            except FileNotFoundError:
+                pass
+
+            # 2. Try flatpak (search by partial name)
+            try:
+                fp_list = subprocess.run(
+                    ["flatpak", "list", "--app", "--columns=application"],
+                    capture_output=True, text=True, timeout=5
+                )
+                matches = [
+                    line for line in fp_list.stdout.splitlines()
+                    if app.lower() in line.lower()
+                ]
+                if matches:
+                    fp_id = matches[0].strip()
+                    launch_cmd = ["flatpak", "run", fp_id]
+                    if args:
+                        launch_cmd.append(args)
+                    subprocess.Popen(
+                        launch_cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    return f"Launched {app} (Flatpak: {fp_id})."
+            except Exception:
+                pass
+
+            # 3. Try snap
+            try:
+                subprocess.Popen(
+                    ["snap", "run", app] + ([args] if args else []),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                return f"Launched {app} via Snap."
+            except Exception:
+                pass
+
+            # 4. xdg-open fallback
+            subprocess.Popen(
+                ["xdg-open", args or app],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return f"Attempted to open {app} via system default handler."
+
+        except Exception as e:
+            print(f"[ToolExecutor] Error in _open_application: {e}")
+            return f"Could not open {app}: {e}"
+
+    def _spotify_control(
+        self,
+        action: str,
+        query: str = "",
+        value: Optional[int] = None
+    ) -> str:
+        """
+        Control Spotify via MPRIS2 over DBus.
+
+        Args:
+            action: play, pause, play_pause, next, previous, stop, search, open, status, volume
+            query: Search string (for 'search' action)
+            value: Volume 0-100 (for 'volume' action)
+
+        Returns:
+            Result message
+        """
+        DEST = "org.mpris.MediaPlayer2.spotify"
+        PATH = "/org/mpris/MediaPlayer2"
+        PLAYER = "org.mpris.MediaPlayer2.Player"
+
+        def mpris(method: str) -> bool:
+            result = subprocess.run(
+                ["dbus-send", "--session", "--type=method_call",
+                 f"--dest={DEST}", PATH, f"{PLAYER}.{method}"],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.returncode == 0
+
+        def now_playing() -> str:
+            """Fetch the current track from MPRIS and return a formatted string."""
+            import re as _re
+            import time as _time
+            _time.sleep(0.6)  # wait for player to update after track change
+            result = subprocess.run(
+                ["dbus-send", "--session", "--print-reply",
+                 f"--dest={DEST}", PATH,
+                 "org.freedesktop.DBus.Properties.GetAll",
+                 f"string:{PLAYER}"],
+                capture_output=True, text=True, timeout=5
+            )
+            out = result.stdout
+            if not out:
+                return ""
+
+            def extract(key: str) -> str:
+                m = _re.search(rf'string "{key}"\s+variant\s+string "([^"]+)"', out)
+                return m.group(1) if m else "unknown"
+
+            title = extract("xesam:title")
+            artist_m = _re.search(
+                r'string "xesam:artist".*?string "([^"]+)"', out, _re.DOTALL
+            )
+            artist = artist_m.group(1) if artist_m else extract("xesam:artist")
+            if title == "unknown":
+                return ""
+            return f"Now playing: \"{title}\" by {artist}."
+
+        try:
+            print(f"[ToolExecutor] Spotify: {action} {query or ''}")
+
+            if action == "play":
+                mpris("Play")
+                track = now_playing()
+                return f"Spotify: playing. {track}".strip()
+
+            elif action == "pause":
+                mpris("Pause")
+                return "Spotify: paused."
+
+            elif action == "play_pause":
+                mpris("PlayPause")
+                track = now_playing()
+                return f"Spotify: toggled. {track}".strip()
+
+            elif action == "next":
+                mpris("Next")
+                track = now_playing()
+                return f"Spotify: skipped. {track}" if track else "Spotify: skipped to next track."
+
+            elif action == "previous":
+                mpris("Previous")
+                track = now_playing()
+                return f"Spotify: went back. {track}" if track else "Spotify: went to previous track."
+
+            elif action == "stop":
+                mpris("Stop")
+                return "Spotify: stopped."
+
+            elif action == "open":
+                subprocess.Popen(
+                    ["flatpak", "run", "com.spotify.Client"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                return "Spotify: opening."
+
+            elif action == "search":
+                if not query:
+                    return "Error: Provide a search query."
+                encoded = query.replace(" ", "%20")
+                subprocess.Popen(
+                    ["xdg-open", f"spotify:search:{encoded}"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                return f"Spotify: searching for '{query}'."
+
+            elif action == "volume":
+                if value is None:
+                    return "Error: Provide a volume level (0-100)."
+                vol = max(0.0, min(1.0, value / 100.0))
+                subprocess.run(
+                    ["dbus-send", "--session", "--type=method_call",
+                     f"--dest={DEST}", PATH,
+                     "org.freedesktop.DBus.Properties.Set",
+                     f"string:{PLAYER}", "string:Volume",
+                     f"variant:double:{vol}"],
+                    capture_output=True, text=True, timeout=5
+                )
+                return f"Spotify: volume set to {value}%."
+
+            elif action == "status":
+                import re as _re
+                result = subprocess.run(
+                    ["dbus-send", "--session", "--print-reply",
+                     f"--dest={DEST}", PATH,
+                     "org.freedesktop.DBus.Properties.GetAll",
+                     f"string:{PLAYER}"],
+                    capture_output=True, text=True, timeout=5
+                )
+                out = result.stdout
+
+                def extract(key: str) -> str:
+                    m = _re.search(rf'string "{key}"\s+variant\s+string "([^"]+)"', out)
+                    return m.group(1) if m else "unknown"
+
+                status = extract("PlaybackStatus")
+                title = extract("xesam:title")
+                artist_m = _re.search(
+                    r'string "xesam:artist".*?string "([^"]+)"', out, _re.DOTALL
+                )
+                artist = artist_m.group(1) if artist_m else "unknown"
+                album = extract("xesam:album")
+                return (
+                    f"Spotify status: {status}\n"
+                    f"Track: {title}\nArtist: {artist}\nAlbum: {album}"
+                )
+
+            else:
+                return f"Error: Unknown Spotify action '{action}'."
+
+        except FileNotFoundError:
+            return "Error: dbus-send not found. Make sure dbus-tools is installed."
+        except Exception as e:
+            print(f"[ToolExecutor] Error in _spotify_control: {e}")
+            return f"Spotify control error: {e}"

@@ -91,3 +91,16 @@ npm-debug.log*
 # Temporary files
 *.tmp
 *.temp
+
+# Personal data — never commit these
+jarvis_memory/
+jarvis_notes/
+jarvis_files/
+*.db
+facts.db
+
+# Claude Code local settings (contains personal paths)
+.claude/
+
+# Compiled voice model cache
+jarvis/voice/__pycache__/

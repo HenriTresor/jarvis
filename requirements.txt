@@ -3,42 +3,41 @@
 
 # Voice Pipeline (Wake Word, STT, TTS)
 openwakeword
-faster-whisper>=1.1.0
-TTS==0.22.0
-sounddevice==0.4.6
-pyaudio==0.2.14
-scipy==1.13.0
-numpy==1.26.0
-
-# Brain (LLM Client)
-ollama==0.3.0
+faster-whisper
+TTS
+sounddevice
+pyaudio
+scipy
+numpy
 
 # Memory (Vector DB + Structured Facts)
-chromadb>=1.0.0
-sentence-transformers>=3.0.0
+chromadb
+
+# LLM (Groq cloud inference)
+groq
 
 # Agent & Tools (Web Search, Weather, etc.)
-duckduckgo-search>=6.2.0
-requests==2.32.0
-python-dotenv==1.0.0
+duckduckgo-search
+requests
+python-dotenv
 
 # Vision (Image Analysis, Motion Detection)
-opencv-python==4.10.0.84
-Pillow==10.4.0
+opencv-python
+Pillow
 
 # API Backend (FastAPI + WebSocket)
-fastapi==0.112.0
-uvicorn==0.30.0
-pydantic==2.8.0
-websockets>=12.0
-aiofiles>=23.0
-python-multipart>=0.0.9
+fastapi
+uvicorn
+pydantic
+websockets
+aiofiles
+python-multipart
 
 # Optional: Google APIs (Gmail, Calendar)
-# google-auth==2.32.0
-# google-auth-oauthlib==1.2.0
-# google-api-python-client==2.139.0
+# google-auth
+# google-auth-oauthlib
+# google-api-python-client
 
 # Optional: Task Queue (Celery + Redis)
-# celery==5.4.0
-# redis==5.0.8
+# celery
+# redis

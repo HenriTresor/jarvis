@@ -15,7 +15,7 @@ import json
 import uuid
 from datetime import datetime
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from typing import List, Dict, Optional
 
 load_dotenv()
@@ -76,22 +76,17 @@ class MemoryManager:
         try:
             print(f"[Memory] Initializing memory system at: {db_path}")
 
-            # Initialize ChromaDB (vector store)
+            # Initialize ChromaDB with built-in ONNX embedding (no extra deps)
             self.chroma: chromadb.PersistentClient = (
                 chromadb.PersistentClient(path=db_path)
             )
+            self._ef = ONNXMiniLM_L6_V2()
             self.collection = self.chroma.get_or_create_collection(
                 name="conversations",
+                embedding_function=self._ef,
                 metadata={"hnsw:space": "cosine"}
             )
-            print(f"[Memory] ChromaDB collection initialized.")
-
-            # Load embedding model (free, local)
-            print(f"[Memory] Loading embedding model (all-MiniLM-L6-v2)...")
-            self.embedder: SentenceTransformer = SentenceTransformer(
-                "all-MiniLM-L6-v2"
-            )
-            print(f"[Memory] Embedding model loaded.")
+            print(f"[Memory] ChromaDB collection initialized (all-MiniLM-L6-v2).")
 
             # Initialize SQLite for structured facts
             self.sql_conn: sqlite3.Connection = sqlite3.connect(
@@ -166,21 +161,16 @@ class MemoryManager:
                 print(f"[Memory] Warning: Empty message in save_conversation")
                 return
 
-            # Combine user and assistant messages for embedding
             text: str = f"User: {user_msg}\nJarvis: {assistant_msg}"
-
-            # Generate embedding
-            embedding: List[float] = self.embedder.encode(text).tolist()
             doc_id: str = str(uuid.uuid4())
 
-            # Store in ChromaDB
+            # chromadb embeds automatically via the collection's embedding_function
             self.collection.add(
                 ids=[doc_id],
-                embeddings=[embedding],
                 documents=[text],
                 metadatas=[{
                     "timestamp": datetime.now().isoformat(),
-                    "user_msg": user_msg[:200],  # Truncate for metadata
+                    "user_msg": user_msg[:200],
                 }]
             )
 
@@ -214,12 +204,9 @@ class MemoryManager:
             if self.collection.count() == 0:
                 return []
 
-            # Embed the query
-            query_embedding: List[float] = self.embedder.encode(query).tolist()
-
-            # Search ChromaDB
+            # chromadb embeds the query automatically
             results: Dict[str, List] = self.collection.query(
-                query_embeddings=[query_embedding],
+                query_texts=[query],
                 n_results=min(n_results, self.collection.count())
             )
 

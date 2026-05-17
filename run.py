@@ -77,8 +77,12 @@ def text_mode(agent: JarvisAgent) -> None:
                     break
 
                 print(f"[Run] Processing: '{user_input[:60]}...'")
-                response: str = agent.think(user_input)
-                print(f"\nJarvis: {response}")
+                print("\nJarvis: ", end="", flush=True)
+                response_parts = []
+                for chunk in agent.think_stream(user_input):
+                    print(chunk, end="", flush=True)
+                    response_parts.append(chunk)
+                print()  # newline after stream ends
 
             except KeyboardInterrupt:
                 print(f"\n[Run] Keyboard interrupt. Exiting text mode.")
@@ -237,6 +241,13 @@ def main() -> None:
         if args.mode == "text":
             text_mode(agent)
         elif args.mode == "voice":
+            import subprocess as _sp
+            ui_url = f"http://localhost:{port}"
+            print(f"[Run] Opening UI at {ui_url}")
+            _sp.Popen(
+                ["xdg-open", ui_url],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
+            )
             voice_mode(agent, speaker_wav=speaker_wav)
         elif args.mode == "api":
             api_mode()

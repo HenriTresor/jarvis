@@ -8,9 +8,12 @@ Serves as the bridge between the frontend (React dashboard) and the
 Jarvis agent backend (LLM, memory, tools).
 """
 
+import asyncio
 import os
 import json
 import base64
+import threading
+import queue
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from dotenv import load_dotenv
@@ -417,40 +420,35 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
                 print(f"[API] WebSocket message: {user_msg[:60]}...")
 
-                # Get agent and memory
                 agent: JarvisAgent = get_agent()
-                memory: MemoryManager = get_memory()
 
-                # Build system prompt
-                system: str = agent._build_system_prompt()
+                # Bridge the sync think_stream() generator to the async WebSocket
+                # using a thread + queue so tools and streaming both work.
+                chunk_queue: queue.Queue = queue.Queue()
 
-                # Build memory context
-                memory_ctx: str = memory.build_context(user_msg)
-                full_msg: str = (
-                    f"{memory_ctx}\n\nUser: {user_msg}"
-                    if memory_ctx else user_msg
-                )
+                def _run_stream() -> None:
+                    try:
+                        for chunk in agent.think_stream(user_msg):
+                            chunk_queue.put(chunk)
+                    except Exception as exc:
+                        chunk_queue.put(exc)
+                    finally:
+                        chunk_queue.put(None)  # sentinel
 
-                # Stream response token by token
-                full_response: str = ""
-                for chunk in agent.llm.chat_stream(
-                    messages=[{"role": "user", "content": full_msg}],
-                    system_prompt=system
-                ):
-                    full_response += chunk
-                    await websocket.send_json({
-                        "chunk": chunk,
-                        "done": False
-                    })
+                stream_thread = threading.Thread(target=_run_stream, daemon=True)
+                stream_thread.start()
 
-                # Signal end of stream
-                await websocket.send_json({
-                    "chunk": "",
-                    "done": True
-                })
+                loop = asyncio.get_event_loop()
+                while True:
+                    item = await loop.run_in_executor(None, chunk_queue.get)
+                    if item is None:
+                        break
+                    if isinstance(item, Exception):
+                        await websocket.send_json({"error": str(item), "done": True})
+                        break
+                    await websocket.send_json({"chunk": item, "done": False})
 
-                # Save conversation to memory
-                memory.save_conversation(user_msg, full_response)
+                await websocket.send_json({"chunk": "", "done": True})
                 print(f"[API] WebSocket response complete")
 
             except json.JSONDecodeError:

@@ -1,237 +1,242 @@
 """
 LLM Client for J.A.R.V.I.S. Brain
 
-Wraps Ollama for local, free LLM inference using Llama 3.1 8B.
+Wraps Groq for fast cloud inference using Llama 3.3 70B (or any Groq model).
 Supports both single-call and streaming interactions.
-Migration path: swap ollama calls for anthropic.messages.create() (same interface).
 """
 
 import os
-import ollama
+import re
+from groq import Groq
 from typing import List, Dict, Any, Optional, Generator
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class LLMClient:
     """
-    Wraps Ollama for local LLM inference.
+    Wraps Groq cloud inference with an automatic fallback model chain.
 
-    Uses Llama 3.1 8B as the default model:
-    - Runs on CPU (8GB RAM) or GPU if available
-    - Supports native function/tool calling
-    - Strong instruction following and reasoning
-    - ~10-15 tokens/second on CPU (acceptable for personal assistant)
-
-    Production migration:
-        Replace ollama.chat() with anthropic.messages.create()
-        Same tool/function schema works with Claude's API—no code changes needed.
-
-    Example:
-        client = LLMClient()
-        response = client.chat(
-            messages=[{"role": "user", "content": "What is 2+2?"}],
-            system_prompt="You are a helpful assistant."
-        )
-        print(response["content"])  # Output: "2+2 equals 4."
-
-    Example with streaming:
-        for chunk in client.chat_stream(
-            messages=[{"role": "user", "content": "Tell me a story"}],
-            system_prompt="Be creative."
-        ):
-            print(chunk, end="", flush=True)
+    Tries each model in FALLBACK_CHAIN in order when rate limits are hit.
+    When all models are exhausted, returns a Jarvis-style message with the
+    actual retry time parsed from the Groq error response.
     """
 
-    MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
-    DEFAULT_TIMEOUT: int = 300  # 5 minutes
+    MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    # Ordered list of fallback models to try when the primary is rate-limited.
+    # Each has a different free-tier quota so they fail independently.
+    FALLBACK_CHAIN: List[str] = [
+        m.strip()
+        for m in os.getenv(
+            "GROQ_FALLBACK_CHAIN",
+            "llama-3.1-8b-instant,gemma2-9b-it,mixtral-8x7b-32768",
+        ).split(",")
+        if m.strip()
+    ]
 
     def __init__(self) -> None:
-        """
-        Initialize the LLM client and verify Ollama is running.
-
-        Attempts to connect to Ollama at OLLAMA_HOST (default localhost:11434).
-        If Ollama is not running, raises an exception with clear instructions.
-
-        Raises:
-            RuntimeError: If Ollama is not running or unreachable
-        """
-        try:
-            print(f"[LLM] Connecting to Ollama...")
-            models_resp = ollama.list()
-            if isinstance(models_resp, dict):
-                model_list = models_resp.get('models', [])
-            else:
-                model_list = getattr(models_resp, 'models', []) or []
-            model_count = len(model_list)
-            print(f"[LLM] Connected to Ollama.")
-            print(f"[LLM] Available models: {model_count}")
-            print(f"[LLM] Using model: {self.MODEL}")
-        except Exception as e:
-            error_msg: str = (
-                f"[LLM] Error: Cannot connect to Ollama.\n"
-                f"Make sure Ollama is running:\n"
-                f"  1. Install Ollama from https://ollama.com\n"
-                f"  2. Run: ollama serve\n"
-                f"  3. Pull the model: ollama pull {self.MODEL}\n"
-                f"Details: {e}"
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "[LLM] GROQ_API_KEY not set. Add it to your .env file."
             )
-            print(error_msg)
-            raise RuntimeError(error_msg)
+        self.client: Groq = Groq(api_key=api_key)
+        print(f"[LLM] Connected to Groq. Model: {self.MODEL}")
+
+    def _clean_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Strip non-standard keys before sending to the Groq API."""
+        cleaned = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "tool":
+                cleaned.append({
+                    "role": "tool",
+                    "content": msg.get("content", ""),
+                    "tool_call_id": msg.get("tool_call_id", "0"),
+                })
+            elif role == "assistant" and msg.get("tool_calls"):
+                cleaned.append({
+                    "role": "assistant",
+                    "content": msg.get("content") or "",
+                    "tool_calls": msg["tool_calls"],
+                })
+            else:
+                cleaned.append({
+                    "role": role,
+                    "content": msg.get("content", ""),
+                })
+        return cleaned
 
     def chat(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        system_prompt: str = ""
+        system_prompt: str = "",
     ) -> Dict[str, Any]:
         """
         Single, non-streaming call to the LLM.
 
-        Sends a list of messages to the model and returns the complete response.
-        Supports optional tools/functions for the LLM to call.
-
-        Args:
-            messages: List of message dicts with "role" (user/assistant/tool) and "content"
-                     Example: [{"role": "user", "content": "Hello"}]
-            tools: Optional list of tool/function definitions (JSON schema format)
-                  Example: [{"type": "function", "function": {...}}]
-            system_prompt: Optional system prompt to prepend to the conversation
-
-        Returns:
-            Dict with keys:
-            - "content": The assistant's text response (str)
-            - "tool_calls": Optional list of tool calls (if any)
-            - "model": The model used (str)
-            - "stop_reason": Why the model stopped (str)
-
-        Raises:
-            Exception: On connection/API error (caught internally, returns safe fallback)
+        Returns a dict with:
+          - "content": assistant text response
+          - "tool_calls": list of tool call dicts (if any)
+          - "model": model name
         """
+        kwargs: Dict[str, Any] = {"model": self.MODEL, "messages": []}
         try:
-            if not messages:
-                print(f"[LLM] Error: No messages provided")
-                return {"content": "No input received.", "model": self.MODEL}
-
-            # Format messages: prepend system prompt if provided
-            formatted_messages: List[Dict[str, Any]] = []
+            formatted: List[Dict[str, Any]] = []
             if system_prompt:
-                formatted_messages.append({
-                    "role": "system",
-                    "content": system_prompt
-                })
-            formatted_messages.extend(messages)
+                formatted.append({"role": "system", "content": system_prompt})
+            formatted.extend(self._clean_messages(messages))
 
-            print(f"[LLM] Sending request to model (messages: {len(messages)})")
-
-            # Build the API call
-            kwargs: Dict[str, Any] = {
-                "model": self.MODEL,
-                "messages": formatted_messages,
-                "stream": False
-            }
+            kwargs = {"model": self.MODEL, "messages": formatted}
             if tools:
                 kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
                 print(f"[LLM] Tools available: {len(tools)}")
 
-            # Call Ollama
-            response: Dict[str, Any] = ollama.chat(**kwargs)
-            message: Dict[str, Any] = response.get("message", {})
+            print(f"[LLM] Sending request (messages: {len(messages)})")
+            response = self.client.chat.completions.create(**kwargs)
+            msg = response.choices[0].message
+
+            result: Dict[str, Any] = {
+                "content": msg.content or "",
+                "model": self.MODEL,
+            }
+
+            if msg.tool_calls:
+                result["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ]
+                print(f"[LLM] {len(msg.tool_calls)} tool call(s) returned.")
 
             print(f"[LLM] Response received.")
-            return message
+            return result
+
         except Exception as e:
+            err_str = str(e)
+            last_error = err_str
+
+            if "rate_limit_exceeded" in err_str:
+                tried = {kwargs.get("model", self.MODEL)}
+                for fallback in self.FALLBACK_CHAIN:
+                    if fallback in tried:
+                        continue
+                    tried.add(fallback)
+                    print(f"[LLM] Rate limit hit. Trying fallback: {fallback}...")
+                    try:
+                        kwargs["model"] = fallback
+                        # If previous error was "request too large", trim history
+                        # to the 6 most recent messages so smaller models can handle it
+                        if "too large" in last_error or "reduce your message size" in last_error:
+                            msgs = kwargs["messages"]
+                            # Always keep the system message (first) + last 6 messages
+                            system_msgs = [m for m in msgs if m.get("role") == "system"]
+                            non_system = [m for m in msgs if m.get("role") != "system"]
+                            kwargs["messages"] = system_msgs + non_system[-6:]
+                            print(f"[LLM] Trimmed history to last 6 messages for {fallback}.")
+                        response = self.client.chat.completions.create(**kwargs)
+                        msg = response.choices[0].message
+                        result: Dict[str, Any] = {
+                            "content": msg.content or "",
+                            "model": fallback,
+                        }
+                        if msg.tool_calls:
+                            result["tool_calls"] = [
+                                {
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": tc.function.arguments,
+                                    },
+                                }
+                                for tc in msg.tool_calls
+                            ]
+                        print(f"[LLM] Fallback {fallback} responded.")
+                        return result
+                    except Exception as fe:
+                        last_error = str(fe)
+                        if "rate_limit_exceeded" not in last_error:
+                            break  # Non-rate-limit error — stop trying
+
+                # All models exhausted — extract retry time and respond in character
+                retry_msg = self._parse_retry_time(last_error)
+                print(f"[LLM] All models rate-limited. {retry_msg}")
+                return {
+                    "content": (
+                        f"All systems are currently throttled, sir. "
+                        f"{retry_msg} I'll be fully operational again shortly."
+                    ),
+                    "model": "none",
+                }
+
             print(f"[LLM] Error in chat: {e}")
             return {
-                "content": "I encountered an error processing your request. Please try again.",
-                "model": self.MODEL
+                "content": "Systems encountered an unexpected error, sir. Standing by.",
+                "model": self.MODEL,
             }
+
+    def _parse_retry_time(self, error_str: str) -> str:
+        """Extract the retry-after time from a Groq rate limit error string."""
+        match = re.search(r"Please try again in ([^\.']+)", error_str)
+        if match:
+            return f"Groq requests a {match.group(1).strip()} cooldown."
+        return "Retry time unknown."
 
     def chat_stream(
         self,
         messages: List[Dict[str, Any]],
-        system_prompt: str = ""
+        system_prompt: str = "",
     ) -> Generator[str, None, None]:
         """
-        Streaming call to the LLM.
+        Streaming call to the LLM. Yields text chunks as they arrive.
 
-        Yields text chunks as they arrive from the model, allowing
-        real-time response streaming and low latency user feedback.
-
-        Args:
-            messages: List of message dicts (same format as chat())
-            system_prompt: Optional system prompt to prepend
-
-        Yields:
-            str: Text chunks of the response as they arrive
-
-        Raises:
-            Exception: On connection/API error (caught internally, yields error message)
-
-        Example:
-            for chunk in client.chat_stream(messages):
-                print(chunk, end="", flush=True)
-            print()  # newline at the end
+        Note: streaming does not support tool calls — use chat() for tool use.
         """
-        try:
-            if not messages:
-                print(f"[LLM] Error: No messages provided")
-                yield "No input received."
+        formatted: List[Dict[str, Any]] = []
+        if system_prompt:
+            formatted.append({"role": "system", "content": system_prompt})
+        formatted.extend(self._clean_messages(messages))
+
+        models_to_try = [self.MODEL] + self.FALLBACK_CHAIN
+        last_error = ""
+
+        for model in models_to_try:
+            try:
+                print(f"[LLM] Streaming request via {model} (messages: {len(messages)})")
+                stream = self.client.chat.completions.create(
+                    model=model,
+                    messages=formatted,
+                    stream=True,
+                )
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+                print(f"[LLM] Streaming complete.")
+                return
+            except Exception as e:
+                last_error = str(e)
+                if "rate_limit_exceeded" in last_error:
+                    print(f"[LLM] Rate limit on {model}, trying next...")
+                    continue
+                print(f"[LLM] Error in chat_stream: {e}")
+                yield f"Systems error, sir: {e}"
                 return
 
-            # Format messages
-            formatted_messages: List[Dict[str, Any]] = []
-            if system_prompt:
-                formatted_messages.append({
-                    "role": "system",
-                    "content": system_prompt
-                })
-            formatted_messages.extend(messages)
-
-            print(f"[LLM] Streaming request to model (messages: {len(messages)})")
-
-            # Call Ollama with streaming enabled
-            stream = ollama.chat(
-                model=self.MODEL,
-                messages=formatted_messages,
-                stream=True
-            )
-
-            # Yield chunks as they arrive
-            for chunk in stream:
-                message_chunk: Dict[str, Any] = chunk.get("message", {})
-                content_chunk: str = message_chunk.get("content", "")
-                if content_chunk:
-                    yield content_chunk
-
-            print(f"[LLM] Streaming complete.")
-        except Exception as e:
-            print(f"[LLM] Error in chat_stream: {e}")
-            yield f"Error streaming response: {e}"
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        Retrieve information about the currently configured model.
-
-        Returns metadata about the model (size, parameters, etc.).
-
-        Returns:
-            Dict with model information, or empty dict on error
-
-        Raises:
-            Exception: On API error (caught internally)
-        """
-        try:
-            print(f"[LLM] Fetching model info for {self.MODEL}...")
-            # Ollama doesn't have a dedicated endpoint for this,
-            # but we can return standard info about the model
-            info: Dict[str, Any] = {
-                "model": self.MODEL,
-                "description": "Llama 3.1 8B (local, free, function-calling enabled)",
-                "context_window": 8192,
-                "parameters": 8000000000,  # 8 billion
-                "quantization": "q4_0 (4-bit quantized)"
-            }
-            print(f"[LLM] Model info retrieved.")
-            return info
-        except Exception as e:
-            print(f"[LLM] Error in get_model_info: {e}")
-            return {}
+        retry_msg = self._parse_retry_time(last_error)
+        print(f"[LLM] All streaming models rate-limited. {retry_msg}")
+        yield (
+            f"All systems are currently throttled, sir. "
+            f"{retry_msg} I'll be back online shortly."
+        )
