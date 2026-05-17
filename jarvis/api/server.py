@@ -607,11 +607,21 @@ async def startup_event() -> None:
     Returns:
         None
     """
+    global _memory, _agent
     try:
         print(f"[API] ===== Startup Event =====")
         print(f"[API] J.A.R.V.I.S. API starting...")
         print(f"[API] Available at http://localhost:8000")
         print(f"[API] Docs at http://localhost:8000/docs")
+        # Initialize in the main thread so SQLite connections are thread-safe.
+        _memory = MemoryManager()
+        print(f"[API] MemoryManager ready.")
+        _agent = JarvisAgent(
+            location=os.getenv("LOCATION", "Kigali, Rwanda"),
+            home_assistant_url=os.getenv("HOME_ASSISTANT_URL") or None,
+            ha_token=os.getenv("HOME_ASSISTANT_TOKEN") or None,
+        )
+        print(f"[API] JarvisAgent ready.")
     except Exception as e:
         print(f"[API] Error in startup_event: {e}")
 
