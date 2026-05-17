@@ -42,14 +42,15 @@ class LLMClient:
     MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     # Only tool/function-calling capable models confirmed on Groq's free tier.
+    # Ordered strongest → weakest. All confirmed tool-callable on Groq free tier.
     GROQ_CHAIN: List[str] = [
         m.strip()
         for m in os.getenv(
             "GROQ_FALLBACK_CHAIN",
             """
             llama-3.3-70b-versatile,
-            meta-llama/llama-4-scout-17b-16e-instruct,
             qwen/qwen3-32b,
+            meta-llama/llama-4-scout-17b-16e-instruct,
             llama-3.1-8b-instant,
             """,
         ).split(",")
@@ -85,7 +86,7 @@ class LLMClient:
                 "name": "Cerebras",
                 "client": _OAI(api_key=cerebras_key, base_url="https://api.cerebras.ai/v1"),
                 "models": [
-                    os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct-2507"),
+                    os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct-2507"),  # 235B MoE
                     "llama3.1-8b",
                 ],
             })
@@ -99,8 +100,8 @@ class LLMClient:
                     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
                 ),
                 "models": [
-                    os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-                    "gemini-2.5-flash",
+                    os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),  # most capable
+                    "gemini-2.0-flash",
                     "gemini-2.0-flash-lite",
                 ],
             })
