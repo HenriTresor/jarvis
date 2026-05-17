@@ -1,9 +1,13 @@
 """
 Text-to-Speech Module for J.A.R.V.I.S.
 
-Synthesizes speech using Coqui XTTS v2 (local, free).
-Supports voice cloning with a 6-second voice sample.
-Plays audio through the system speaker.
+Two engines selectable via TTS_ENGINE env var:
+  xtts  (default) — Coqui XTTS v2, high quality, supports voice cloning, slow on CPU
+  piper            — Piper TTS, near-instant on CPU, preset voices, no cloning
+
+Set TTS_ENGINE=piper in .env for fast responses.
+Set PIPER_VOICE=<voice-name> to choose a Piper voice (default: en_GB-alan-medium).
+Set SPEAKER_WAV=<path> for XTTS voice cloning.
 """
 
 import io
@@ -11,7 +15,6 @@ import os
 import wave
 import numpy as np
 import sounddevice as sd
-from TTS.api import TTS
 import threading
 from typing import Optional
 from dotenv import load_dotenv
@@ -19,152 +22,140 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-class TextToSpeech:
-    """
-    Converts text to speech locally using Coqui XTTS v2.
+class _XTTSEngine:
+    """Coqui XTTS v2 — high quality, supports voice cloning, slow on CPU."""
 
-    Supports two modes:
-    1. Default voice: Uses built-in "Ana Florence" voice
-    2. Custom voice cloning: Pass a 6-second voice sample as speaker_wav
-
-    Free tool: Coqui TTS — no API key needed, runs on CPU.
-    Model (~1.8GB) downloads on first run. Subsequent runs are instant.
-    
-    Example (default voice):
-        tts = TextToSpeech()
-        tts.speak("Hello, sir.")
-        tts.speak_async("Processing in the background.")
-
-    Example (voice cloning):
-        tts = TextToSpeech(speaker_wav="./my_voice_sample.wav")
-        tts.speak("This sounds like me!")
-    """
-
-    SAMPLE_RATE: int = 24000
-    MODEL_NAME: str = "tts_models/multilingual/multi-dataset/xtts_v2"
-    DEFAULT_SPEAKER: str = "Ana Florence"  # built-in voice
+    SAMPLE_RATE = 24000
+    MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+    DEFAULT_SPEAKER = "Ana Florence"
 
     def __init__(self, speaker_wav: Optional[str] = None) -> None:
-        """
-        Initialize the Text-to-Speech engine.
+        import torch
+        _orig = torch.load
+        def _patched(*a, **kw):
+            kw.setdefault("weights_only", False)
+            return _orig(*a, **kw)
+        torch.load = _patched
 
-        Downloads and loads the Coqui XTTS v2 model on first run (~1.8GB).
-        Subsequent initializations use cached model (instant).
+        from TTS.api import TTS
+        print("[TTS] Loading Coqui XTTS v2...")
+        print("[TTS] (First run may take 2-5 minutes to download model)")
+        self.tts = TTS(self.MODEL_NAME)
+        self.sample_rate = self.SAMPLE_RATE
+        self.speaker_wav: Optional[str] = None
 
-        Args:
-            speaker_wav: Path to a 6-second .wav voice sample for voice cloning.
-                        Defaults to SPEAKER_WAV env var. If empty, uses default voice.
+        if speaker_wav and os.path.exists(speaker_wav):
+            self.speaker_wav = speaker_wav
+            print(f"[TTS] Voice cloning enabled: {speaker_wav}")
+        else:
+            if speaker_wav:
+                print(f"[TTS] Warning: SPEAKER_WAV not found: {speaker_wav} — using default voice.")
+            print(f"[TTS] Using default voice: {self.DEFAULT_SPEAKER}")
 
-        Raises:
-            Exception: If TTS model cannot be loaded or speaker_wav is invalid
-        """
-        try:
-            print(f"[TTS] Loading Coqui XTTS v2...")
-            print(f"[TTS] (First run may take 2-5 minutes to download model)")
+    def synthesize(self, text: str):
+        if self.speaker_wav:
+            wav = self.tts.tts(text=text, speaker_wav=self.speaker_wav, language="en")
+        else:
+            wav = self.tts.tts(text=text, speaker=self.DEFAULT_SPEAKER, language="en")
+        return np.array(wav, dtype=np.float32), self.sample_rate
 
-            self.tts: TTS = TTS(self.MODEL_NAME)
-            self.speaker_wav: Optional[str] = speaker_wav or os.getenv("SPEAKER_WAV") or None
-            self.sample_rate: int = self.SAMPLE_RATE
 
-            # Validate speaker_wav if provided
-            if self.speaker_wav:
-                if not os.path.exists(self.speaker_wav):
-                    print(f"[TTS] Warning: SPEAKER_WAV not found: {self.speaker_wav}")
-                    print(f"[TTS] Falling back to default voice.")
-                    self.speaker_wav = None
-                else:
-                    print(f"[TTS] Voice cloning enabled: {self.speaker_wav}")
+class _PiperEngine:
+    """Piper TTS — near-instant on CPU, preset voices, no voice cloning."""
 
-            if not self.speaker_wav:
-                print(f"[TTS] Using default voice: {self.DEFAULT_SPEAKER}")
+    def __init__(self, voice: str = "en_GB-alan-medium") -> None:
+        from piper import PiperVoice
+        model_path = self._get_model(voice)
+        print(f"[TTS] Loading Piper voice: {voice}")
+        self.voice = PiperVoice.load(
+            model_path,
+            config_path=model_path + ".json",
+            use_cuda=False,
+        )
+        self.sample_rate: int = self.voice.config.sample_rate
 
-            print(f"[TTS] TTS engine ready.")
-        except Exception as e:
-            print(f"[TTS] Error in __init__: {e}")
-            raise
+    def _get_model(self, voice: str) -> str:
+        cache_dir = os.path.expanduser("~/.local/share/jarvis/piper")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        parts = voice.split("-")
+        lang_region = parts[0]           # e.g. en_US
+        lang = lang_region.split("_")[0] # e.g. en
+        name = "-".join(parts[1:-1])     # e.g. ryan (handles multi-word names)
+        quality = parts[-1]              # e.g. high
+        folder = f"{lang}/{lang_region}/{name}/{quality}"
+
+        onnx_path = os.path.join(cache_dir, folder, f"{voice}.onnx")
+        json_path = onnx_path + ".json"
+
+        if not os.path.exists(onnx_path) or not os.path.exists(json_path):
+            print(f"[TTS] Downloading Piper model: {voice} (one-time)...")
+            from huggingface_hub import hf_hub_download
+            for filename in [f"{voice}.onnx", f"{voice}.onnx.json"]:
+                hf_hub_download(
+                    repo_id="rhasspy/piper-voices",
+                    filename=f"{folder}/{filename}",
+                    local_dir=cache_dir,
+                    local_dir_use_symlinks=False,
+                )
+            print("[TTS] Piper model ready.")
+
+        return onnx_path
+
+    def synthesize(self, text: str):
+        chunks = list(self.voice.synthesize(text))
+        if not chunks:
+            print("[TTS] Piper produced no audio — check model file")
+            return np.zeros(1, dtype=np.float32), self.sample_rate
+        audio = np.concatenate([chunk.audio_float_array for chunk in chunks])
+        return audio.astype(np.float32), self.sample_rate
+
+
+class TextToSpeech:
+    """
+    TTS facade — delegates to Piper (fast) or XTTS (quality/cloning).
+
+    .env options:
+      TTS_ENGINE=piper          use Piper (fast, CPU-friendly)
+      TTS_ENGINE=xtts           use XTTS v2 (default, supports voice cloning)
+      PIPER_VOICE=en_GB-alan-medium   Piper voice name
+      SPEAKER_WAV=/path/to/sample.wav   XTTS voice cloning source
+    """
+
+    def __init__(self, speaker_wav: Optional[str] = None) -> None:
+        engine = os.getenv("TTS_ENGINE", "xtts").lower()
+        speaker_wav = speaker_wav or os.getenv("SPEAKER_WAV") or None
+
+        if engine == "piper":
+            voice = os.getenv("PIPER_VOICE", "en_GB-alan-medium")
+            self._engine = _PiperEngine(voice=voice)
+        else:
+            self._engine = _XTTSEngine(speaker_wav=speaker_wav)
+
+        print("[TTS] TTS engine ready.")
 
     def speak(self, text: str) -> None:
-        """
-        Synthesizes text and plays it immediately (blocking).
-
-        Generates speech from text using the loaded TTS model and plays
-        through the system speaker. This call blocks until playback completes.
-
-        Args:
-            text: Text to synthesize and play
-
-        Returns:
-            None
-
-        Raises:
-            Exception: On TTS synthesis or audio playback error (caught internally)
-        """
         try:
             if not text or not text.strip():
-                print(f"[TTS] Error: Empty text")
                 return
-
-            display_text: str = text[:60] + "..." if len(text) > 60 else text
-            print(f"[TTS] Speaking: '{display_text}'")
-
-            # Generate speech
-            if self.speaker_wav:
-                # Use custom voice cloning
-                wav = self.tts.tts(
-                    text=text,
-                    speaker_wav=self.speaker_wav,
-                    language="en"
-                )
-            else:
-                # Use default voice
-                wav = self.tts.tts(
-                    text=text,
-                    speaker=self.DEFAULT_SPEAKER,
-                    language="en"
-                )
-
-            # Convert to numpy float32 array
-            audio: np.ndarray = np.array(wav, dtype=np.float32)
-
-            # Play audio through the system speaker
-            sd.play(audio, samplerate=self.sample_rate)
-            sd.wait()  # Block until playback completes
-
-            print(f"[TTS] Playback complete.")
+            audio, sr = self._engine.synthesize(text)
+            sd.play(audio, samplerate=sr)
+            sd.wait()
         except Exception as e:
             print(f"[TTS] Error in speak: {e}")
 
     def generate_audio_bytes(self, text: str) -> bytes:
-        """
-        Synthesize text and return raw WAV bytes (does not play audio).
-
-        Used by the API to send audio to the browser for playback + waveform visualization.
-
-        Args:
-            text: Text to synthesize
-
-        Returns:
-            WAV file bytes, or empty bytes on error
-        """
         try:
             if not text or not text.strip():
                 return b""
-
-            if self.speaker_wav:
-                wav = self.tts.tts(text=text, speaker_wav=self.speaker_wav, language="en")
-            else:
-                wav = self.tts.tts(text=text, speaker=self.DEFAULT_SPEAKER, language="en")
-
-            audio = np.array(wav, dtype=np.float32)
+            audio, sr = self._engine.synthesize(text)
             audio_int16 = (audio * 32767).astype(np.int16)
-
             buf = io.BytesIO()
-            with wave.open(buf, 'wb') as wf:
+            with wave.open(buf, "wb") as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(self.SAMPLE_RATE)
+                wf.setframerate(sr)
                 wf.writeframes(audio_int16.tobytes())
-
             print(f"[TTS] Audio bytes generated ({len(buf.getvalue())} bytes).")
             return buf.getvalue()
         except Exception as e:
@@ -172,34 +163,9 @@ class TextToSpeech:
             return b""
 
     def speak_async(self, text: str) -> None:
-        """
-        Synthesizes text and plays it asynchronously (non-blocking).
-
-        Spawns a daemon thread to synthesize and play the text.
-        Returns immediately without waiting for playback to complete.
-        Useful for background announcements or processing while speaking.
-
-        Args:
-            text: Text to synthesize and play
-
-        Returns:
-            None
-
-        Raises:
-            Exception: On thread creation error (caught internally)
-        """
         try:
             if not text or not text.strip():
-                print(f"[TTS] Error: Empty text")
                 return
-
-            # Create and start daemon thread
-            thread: threading.Thread = threading.Thread(
-                target=self.speak,
-                args=(text,),
-                daemon=True
-            )
-            thread.start()
-            print(f"[TTS] Async speech started (non-blocking).")
+            threading.Thread(target=self.speak, args=(text,), daemon=True).start()
         except Exception as e:
             print(f"[TTS] Error in speak_async: {e}")

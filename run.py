@@ -122,7 +122,8 @@ def voice_mode(agent: JarvisAgent, speaker_wav: Optional[str] = None) -> None:
         from jarvis.voice.pipeline import VoicePipeline
         pipeline: VoicePipeline = VoicePipeline(
             brain_callback=agent.think,
-            speaker_wav=speaker_wav
+            speaker_wav=speaker_wav,
+            brain_stream_callback=agent.think_stream,
         )
 
         # Start the pipeline (blocking call)

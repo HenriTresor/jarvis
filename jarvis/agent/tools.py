@@ -23,15 +23,17 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "function": {
             "name": "web_search",
             "description": (
-                "Search the web for current information, news, or facts. "
-                "Use this to find up-to-date information not in your training data."
+                "Search the web for current information, news, facts, prices, schedules, "
+                "scores, weather, people, products, or anything that may have changed since "
+                "training. Write queries short and natural, the way a human would Google them. "
+                "Do not append today's date to the query unless the topic is date-specific."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search query (e.g., 'latest Python news')"
+                        "description": "Short natural search query"
                     },
                     "max_results": {
                         "type": "integer",
@@ -85,16 +87,21 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "function": {
             "name": "run_code",
             "description": (
-                "Execute Python code and return the output. "
-                "Use for calculations, data processing, or running scripts. "
-                "WARNING: Only runs trusted code. No network access."
+                "Execute shell commands or Python code on the user's system and return the output. "
+                "Accepts bash shell commands (sudo, dnf, apt, systemctl, echo, sensors, etc.) "
+                "OR Python code — auto-detected. Use for installations, system diagnostics, "
+                "file operations, calculations, and any terminal command the user asks to run."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "code": {
                         "type": "string",
-                        "description": "Python code to execute (e.g., 'print(2 + 2)')"
+                        "description": (
+                            "Shell command(s) or Python code to execute. "
+                            "Examples: 'sudo dnf install -y lm_sensors', "
+                            "'sensors', 'echo 255 | sudo tee /sys/class/hwmon/hwmon0/pwm1'"
+                        )
                     }
                 },
                 "required": ["code"]

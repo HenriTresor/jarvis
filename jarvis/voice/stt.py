@@ -5,6 +5,7 @@ Transcribes audio to text using faster-whisper (local, free).
 Model runs on CPU in int8 mode for speed and low memory.
 """
 
+import os
 import sounddevice as sd
 import numpy as np
 from faster_whisper import WhisperModel
@@ -35,6 +36,26 @@ class SpeechToText:
     SAMPLE_RATE: int = 16000
     SILENCE_THRESHOLD: float = 0.01
     SILENCE_DURATION: float = 1.5  # seconds of silence = end of speech
+
+    @staticmethod
+    def _find_mic_device() -> Optional[int]:
+        """Return the device index of the physical microphone, or None to use default."""
+        # Allow override via env var
+        override = os.getenv("STT_DEVICE")
+        if override is not None:
+            try:
+                return int(override)
+            except ValueError:
+                pass
+
+        devices = sd.query_devices()
+        # Prefer a device with "Microphone" in the name that has input channels
+        for i, d in enumerate(devices):
+            name = d.get("name", "")
+            if d.get("max_input_channels", 0) > 0 and "microphone" in name.lower():
+                print(f"[STT] Using microphone device {i}: {name}")
+                return i
+        return None  # fall back to system default
 
     def __init__(self, model_size: str = "base") -> None:
         """
@@ -97,11 +118,13 @@ class SpeechToText:
             # Calculate total frames to record (safety limit)
             total_frames: int = int(max_seconds * self.SAMPLE_RATE / 512)
 
+            mic_device = self._find_mic_device()
             with sd.InputStream(
                 samplerate=self.SAMPLE_RATE,
                 channels=1,
                 dtype="float32",
-                blocksize=512
+                blocksize=512,
+                device=mic_device,
             ) as stream:
                 for frame_idx in range(total_frames):
                     try:

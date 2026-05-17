@@ -6,9 +6,10 @@ Implements the full voice interaction loop: listen for wake word,
 record user command, process through brain, and speak response.
 """
 
+import subprocess
 import time
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Generator
 from .wake_word import WakeWordDetector
 from .stt import SpeechToText
 from .tts import TextToSpeech
@@ -38,7 +39,8 @@ class VoicePipeline:
     def __init__(
         self,
         brain_callback: Callable[[str], str],
-        speaker_wav: Optional[str] = None
+        speaker_wav: Optional[str] = None,
+        brain_stream_callback: Optional[Callable] = None,
     ) -> None:
         """
         Initialize the voice pipeline.
@@ -53,6 +55,7 @@ class VoicePipeline:
         """
         try:
             self.brain: Callable[[str], str] = brain_callback
+            self.brain_stream = brain_stream_callback
             self.stt: SpeechToText = SpeechToText(model_size="base")
             self.tts: TextToSpeech = TextToSpeech(speaker_wav=speaker_wav)
             self.detector: WakeWordDetector = WakeWordDetector(
@@ -87,6 +90,9 @@ class VoicePipeline:
 
             print(f"[Pipeline] Wake word detected. Processing...")
 
+            # Pause any media playing so it doesn't bleed into STT recording
+            was_playing = self._media_pause()
+
             # Greet the user
             self.tts.speak("Yes?")
 
@@ -98,26 +104,104 @@ class VoicePipeline:
             if not user_text or not user_text.strip():
                 print(f"[Pipeline] No speech detected.")
                 self.tts.speak("Sorry, I didn't catch that.")
+                if was_playing:
+                    self._media_resume()
                 self._processing = False
                 return
 
             # Send command to the brain (LLM + agent)
             print(f"[Pipeline] Sending to brain: '{user_text}'")
-            response: str = self.brain(user_text)
-
-            # Check if brain returned a valid response
-            if not response or not response.strip():
-                print(f"[Pipeline] Brain returned empty response.")
-                response = "I'm not sure how to respond to that."
-
-            # Speak the response
-            self.tts.speak(response)
+            if self.brain_stream:
+                self._run_streaming_brain(user_text)
+            else:
+                response: str = self.brain(user_text)
+                if not response or not response.strip():
+                    response = "I'm not sure how to respond to that."
+                self.tts.speak(response)
+            if was_playing:
+                self._media_resume()
 
             print(f"[Pipeline] Interaction complete.")
             self._processing = False
         except Exception as e:
             print(f"[Pipeline] Error in _on_wake: {e}")
             self._processing = False
+
+    def _run_streaming_brain(self, user_text: str) -> None:
+        """
+        Use think_stream to announce what Jarvis is doing immediately,
+        then speak the final response once it arrives.
+        """
+        try:
+            stream = self.brain_stream(user_text)
+            first_chunk = next(stream, None)
+            if first_chunk is None:
+                return
+
+            stripped_first = first_chunk.strip()
+            # Pre-execution messages are short complete sentences (e.g. "Searching for X.")
+            is_pre_exec = stripped_first.endswith(".") and len(stripped_first.split()) <= 8
+
+            if is_pre_exec:
+                print(f"[Pipeline] Pre-exec: '{stripped_first}'")
+                self.tts.speak(stripped_first)
+                remaining = "".join(stream).strip()
+                if remaining:
+                    self.tts.speak(remaining)
+            else:
+                # Direct conversational response — collect and speak everything
+                full = first_chunk + "".join(stream)
+                if full.strip():
+                    self.tts.speak(full.strip())
+        except Exception as e:
+            print(f"[Pipeline] Error in _run_streaming_brain: {e}")
+
+    def _media_pause(self) -> bool:
+        """Pause all MPRIS media players. Returns True if something was playing."""
+        try:
+            status = subprocess.run(
+                ["playerctl", "status"],
+                capture_output=True, text=True, timeout=2
+            )
+            playing = status.stdout.strip() == "Playing"
+            if playing:
+                subprocess.run(["playerctl", "pause"], capture_output=True, timeout=2)
+                time.sleep(0.3)  # let audio fully stop before mic opens
+                print("[Pipeline] Media paused for recording.")
+            return playing
+        except FileNotFoundError:
+            # playerctl not installed — try dbus-send directly
+            try:
+                subprocess.run(
+                    ["dbus-send", "--dest=org.mpris.MediaPlayer2.spotify",
+                     "/org/mpris/MediaPlayer2",
+                     "org.mpris.MediaPlayer2.Player.Pause"],
+                    capture_output=True, timeout=2
+                )
+                time.sleep(0.3)
+                return True
+            except Exception:
+                return False
+        except Exception:
+            return False
+
+    def _media_resume(self) -> None:
+        """Resume MPRIS media playback."""
+        try:
+            subprocess.run(["playerctl", "play"], capture_output=True, timeout=2)
+            print("[Pipeline] Media resumed.")
+        except FileNotFoundError:
+            try:
+                subprocess.run(
+                    ["dbus-send", "--dest=org.mpris.MediaPlayer2.spotify",
+                     "/org/mpris/MediaPlayer2",
+                     "org.mpris.MediaPlayer2.Player.Play"],
+                    capture_output=True, timeout=2
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def start(self) -> None:
         """

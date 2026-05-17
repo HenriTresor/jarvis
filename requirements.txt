@@ -5,6 +5,7 @@
 openwakeword
 faster-whisper
 TTS
+piper-tts
 sounddevice
 pyaudio
 scipy
@@ -17,7 +18,7 @@ chromadb
 groq
 
 # Agent & Tools (Web Search, Weather, etc.)
-duckduckgo-search
+ddgs
 requests
 python-dotenv
 

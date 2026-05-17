@@ -138,7 +138,9 @@ class JarvisAgent:
     _REFUSAL_PHRASES = [
         "i cannot assist", "i cannot open", "i cannot access", "i cannot help",
         "i cannot provide", "i cannot browse", "i cannot visit",
+        "i cannot execute", "i cannot run", "i cannot perform",
         "i'm unable to assist", "i'm unable to open", "i'm unable to help",
+        "i'm unable to execute", "i'm unable to run",
         "i won't be able", "i will not", "i refuse",
         "not something i can", "against my guidelines", "against my values",
         "inappropriate", "i'm not able to assist", "i'm not able to open",
@@ -151,6 +153,149 @@ class JarvisAgent:
         """Return True if the model refused a user request instead of executing it."""
         lower = text.lower()
         return any(phrase in lower for phrase in self._REFUSAL_PHRASES)
+
+    # Only these tools need LLM to interpret their output — everything else is relayed directly.
+    _NEEDS_LLM_SYNTHESIS = {
+        "web_search",       # raw results need summarization
+        "get_weather",      # structured JSON → natural language
+        "get_unread_emails",
+        "get_upcoming_events",
+        "describe_image",
+        "detect_motion",
+    }
+
+    def _pre_execution_message(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """Return a short spoken line to yield immediately before tools execute."""
+        if not tool_calls:
+            return ""
+        tc = tool_calls[0]
+        name = tc["function"]["name"]
+        try:
+            args = json.loads(tc["function"].get("arguments", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+
+        app = args.get("app", args.get("application", ""))
+        action = args.get("action", "")
+        query = args.get("query", "")
+
+        if name == "open_application":
+            return f"Opening {app} now."
+        if name == "web_search":
+            return f"Searching for {query}."
+        if name == "get_weather":
+            return f"Checking the weather."
+        if name == "spotify_control":
+            return {"next": "Skipping.", "previous": "Going back.",
+                    "pause": "Pausing.", "play": "Resuming.",
+                    "volume_up": "Turning it up.", "volume_down": "Turning it down."
+                    }.get(action, "On it.")
+        if name == "system_volume":
+            return {"mute": "Muting.", "unmute": "Unmuting.",
+                    "set": f"Setting volume to {args.get('value', '')}%."
+                    }.get(action, "Adjusting volume.")
+        if name == "run_code":
+            return "Running that now."
+        if name == "capture_image":
+            return "Looking now."
+        if name == "get_datetime":
+            return ""  # instant, no need to announce
+        return "On it."
+
+    def _simple_synthesis(
+        self, tool_calls: List[Dict[str, Any]], tool_results: List[str], had_errors: bool
+    ) -> Optional[str]:
+        """
+        Return a direct response for tool actions, skipping the LLM synthesis call.
+
+        All tools bypass LLM synthesis except those in _NEEDS_LLM_SYNTHESIS.
+        Returns None only when LLM interpretation is genuinely required.
+        """
+        if had_errors:
+            return None
+
+        # All executed tools must be outside the LLM-required set
+        names = [tc["function"]["name"] for tc in tool_calls]
+        if any(n in self._NEEDS_LLM_SYNTHESIS for n in names):
+            return None
+
+        # Multiple parallel tool calls — join results concisely
+        if len(tool_calls) > 1:
+            return "Done."
+
+        name = names[0]
+        result = tool_results[0] if tool_results else ""
+        try:
+            args = json.loads(tool_calls[0]["function"].get("arguments", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+
+        # Per-tool formatting
+        if name == "open_application":
+            app = args.get("app", args.get("application", ""))
+            return f"Opened {app}, sir." if app else "Done, sir."
+
+        if name == "spotify_control":
+            action = args.get("action", "")
+            if "now playing" in result.lower():
+                track_part = result.split("Now playing:")[-1].strip().rstrip(".")
+                return f"Now playing: {track_part}."
+            return {"next": "Skipped.", "previous": "Went back.",
+                    "pause": "Paused.", "play": "Resumed.",
+                    "volume_up": "Volume up.", "volume_down": "Volume down."
+                    }.get(action, result or "Done.")
+
+        if name == "system_volume":
+            action = args.get("action", "")
+            return {"mute": "Muted.", "unmute": "Unmuted.",
+                    "set": f"Volume set to {args.get('value', '')}%."
+                    }.get(action, "Done.")
+
+        if name == "system_settings":
+            return "Done."
+
+        if name == "smart_home_control":
+            return result or "Done."
+
+        if name == "save_note":
+            return "Noted, sir."
+
+        if name == "save_user_fact":
+            return ""  # silent
+
+        if name == "get_datetime":
+            return result
+
+        if name == "run_code":
+            low = result.lower()
+            if ("traceback" in low or "syntaxerror" in low
+                    or "error" in low[:40] or result.strip().startswith("  File")):
+                return None  # let LLM synthesize a natural-language error report
+            return result or "Done."
+
+        if name == "read_file":
+            return result or "File not found."
+
+        if name == "write_file":
+            return "Done, sir."
+
+        if name == "find_and_open":
+            return result or "Done."
+
+        if name == "create_calendar_event":
+            return result or "Added to your calendar."
+
+        if name == "send_email":
+            return result or "Sent."
+
+        if name == "capture_image":
+            return result or "Done."
+
+        if name == "get_user_facts":
+            return result or "Nothing on record."
+
+        # Generic fallback — relay the tool result directly
+        return result or "Done."
 
     def _looks_like_fake_action(self, text: str) -> bool:
         """Return True if text claims an action was done or a state exists without a tool call."""
@@ -173,6 +318,24 @@ class JarvisAgent:
         """
         tool_calls: List[Dict[str, Any]] = []
         seen: set = set()
+        # Handle <tool_call>{"name": "x", "arguments": {...}}</tool_call> (qwen format)
+        for tc_match in re.finditer(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', content, re.DOTALL):
+            try:
+                obj = json.loads(tc_match.group(1))
+                tool_name = obj.get("name", "")
+                args = obj.get("arguments", obj.get("parameters", {}))
+                args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                key = f"{tool_name}:{args_str}"
+                if tool_name and key not in seen:
+                    seen.add(key)
+                    tool_calls.append({
+                        "id": f"embedded_{len(tool_calls)}",
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args_str},
+                    })
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         patterns = [
             r'<function=(\w+)>(.*?)</function>',            # <function=name>json</function>
             r'<function=(\w+)\((.*?)\)>\s*</function>',    # <function=name(json)></function>
@@ -211,7 +374,9 @@ class JarvisAgent:
         return tool_calls
 
     def _strip_embedded_tool_calls(self, content: str) -> str:
-        """Remove embedded tool call syntax from content before showing to user."""
+        """Remove embedded tool call syntax and model reasoning blocks from content."""
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL)
         content = re.sub(r'<function=\w+>.*?</function>', '', content, flags=re.DOTALL)
         content = re.sub(r'<function=\w+\(.*?\)>\s*</function>', '', content, flags=re.DOTALL)
         content = re.sub(r'<function>\w+\s*\{[^}]+\}</function>', '', content)
@@ -328,7 +493,9 @@ class JarvisAgent:
                     # ─────────────────────────────────────────────────────
                     # No more tool calls: this is the final response
                     # ─────────────────────────────────────────────────────
-                    final_text: str = response.get("content", "").strip()
+                    final_text: str = self._strip_embedded_tool_calls(
+                        response.get("content", "")
+                    ).strip()
                     if not final_text:
                         final_text = "I'm not sure how to respond to that."
 
@@ -437,8 +604,12 @@ class JarvisAgent:
                             tool_name, tool_args
                         )
 
-                        if result.lower().startswith("error") or \
-                                "error" in result.lower()[:30]:
+                        _low = result.lower()
+                        if (_low.startswith("error")
+                                or "error" in _low[:30]
+                                or "traceback" in _low
+                                or "syntaxerror" in _low
+                                or "exception" in _low[:50]):
                             tool_errors.append(result)
 
                         # Add tool result to conversation history
@@ -546,11 +717,26 @@ class JarvisAgent:
             had_tool_errors: bool = False
             refusal_retried: bool = False
             override_injected_at: int = -1  # history length when override was injected
+            _executed_tool_calls: List[Dict[str, Any]] = []
+            _tool_results: List[str] = []
 
             while iteration < self.MAX_ITERATIONS:
                 iteration += 1
 
                 if tools_were_executed:
+                    # For simple single-tool actions, skip the LLM synthesis call entirely.
+                    simple = self._simple_synthesis(
+                        _executed_tool_calls, _tool_results, had_tool_errors
+                    )
+                    if simple is not None:
+                        if simple:
+                            self.conversation_history.append({
+                                "role": "assistant", "content": simple
+                            })
+                            self.memory.save_conversation(user_input, simple)
+                            yield simple
+                        return
+
                     # Strip refusal+override messages injected during retry so
                     # synthesis doesn't see them and fabricate failure narratives.
                     if override_injected_at >= 0:
@@ -657,7 +843,9 @@ class JarvisAgent:
                 if not tool_calls:
                     # No tools — direct response; yield word-by-word from the
                     # already-complete content (blocking chat() already returned).
-                    final_text: str = response.get("content", "").strip()
+                    final_text: str = self._strip_embedded_tool_calls(
+                        response.get("content", "")
+                    ).strip()
                     if not final_text:
                         final_text = "I'm not sure how to respond to that."
 
@@ -724,6 +912,11 @@ class JarvisAgent:
                         yield word + ("" if i == len(words) - 1 else " ")
                     return
 
+                # Yield an immediate spoken line before tools execute
+                pre_msg = self._pre_execution_message(tool_calls)
+                if pre_msg:
+                    yield pre_msg + " "
+
                 # Execute tool calls
                 self.conversation_history.append({
                     "role": "assistant",
@@ -731,6 +924,8 @@ class JarvisAgent:
                     "tool_calls": tool_calls
                 })
                 stream_tool_errors: List[str] = []
+                _executed_tool_calls: List[Dict[str, Any]] = []
+                _tool_results: List[str] = []
                 for tool_call in tool_calls:
                     try:
                         tool_name: str = tool_call["function"]["name"]
@@ -741,8 +936,14 @@ class JarvisAgent:
                             tool_args = {}
                         print(f"[Agent] Executing tool: {tool_name}")
                         result: str = self.executor.execute(tool_name, tool_args)
-                        if result.lower().startswith("error") or \
-                                "error" in result.lower()[:30]:
+                        _executed_tool_calls.append(tool_call)
+                        _tool_results.append(result)
+                        low = result.lower()
+                        if (low.startswith("error")
+                                or "error" in low[:30]
+                                or "traceback" in low
+                                or "syntaxerror" in low
+                                or "exception" in low[:50]):
                             stream_tool_errors.append(result)
                         self.conversation_history.append({
                             "role": "tool",

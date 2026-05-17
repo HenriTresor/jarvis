@@ -13,7 +13,7 @@ import base64
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from typing import Any, Dict, Optional
 
 load_dotenv()
@@ -141,31 +141,37 @@ class ToolExecutor:
         """
         Search the web using DuckDuckGo (completely free, no API key).
 
-        Args:
-            query: Search query string
-            max_results: Number of results to return (1-10)
-
-        Returns:
-            Formatted search results as string
+        Returns text snippets ready for the LLM to synthesize — do NOT
+        open any URLs from these results, just read the snippet text.
         """
         try:
             if not query:
                 return "Error: Empty search query"
 
             print(f"[ToolExecutor] Web search: {query}")
-            max_results = min(max_results, 10)
+            max_results = min(max_results, 8)
 
             with DDGS() as ddgs:
+                # Try instant answer first (gives direct factual answers)
+                try:
+                    answers = list(ddgs.answers(query))
+                    if answers:
+                        answer_text = answers[0].get("text", "")
+                        if answer_text:
+                            return f"[Instant Answer] {answer_text}"
+                except Exception:
+                    pass
+
                 results: list = list(ddgs.text(query, max_results=max_results))
 
             if not results:
                 return f"No search results found for: {query}"
 
-            formatted: list = []
+            # Return only title + snippet — omit URLs to prevent the LLM
+            # from trying to open them instead of reading the text.
+            formatted: list = ["Search results (read these to answer — do not open URLs):"]
             for i, result in enumerate(results, 1):
-                formatted.append(
-                    f"{i}. {result['title']}\n{result['body']}\n{result['href']}\n"
-                )
+                formatted.append(f"{i}. {result['title']}\n   {result['body']}")
             return "\n".join(formatted)
         except Exception as e:
             print(f"[ToolExecutor] Error in _web_search: {e}")
@@ -257,13 +263,14 @@ class ToolExecutor:
 
     def _run_code(self, code: str) -> str:
         """
-        Execute Python code and return output.
+        Execute code or shell commands and return output.
 
-        WARNING: This is a simple sandbox using subprocess.
-        For production, use E2B or Docker sandbox.
+        Detects whether the input is a shell command or Python code and
+        runs it accordingly. Shell commands run via bash; Python code runs
+        via the Python interpreter.
 
         Args:
-            code: Python code to execute
+            code: Shell command(s) or Python code to execute
 
         Returns:
             Code output (stdout + stderr) or error message
@@ -272,18 +279,72 @@ class ToolExecutor:
             if not code:
                 return "Error: No code provided"
 
-            print(f"[ToolExecutor] Running Python code...")
-
-            result = subprocess.run(
-                ["python", "-c", code],
-                capture_output=True,
-                text=True,
-                timeout=10
+            # Detect shell code. First try explicit markers, then fall back
+            # to compile() — if Python rejects it with SyntaxError it must be
+            # a shell command (e.g. "rm ~/file.txt", "mv a b", "git status").
+            _SHELL_PREFIXES = (
+                "#!", "sudo ", "echo ", "cat ", "ls ", "ll ", "rm ", "mv ",
+                "cp ", "mkdir ", "touch ", "chmod ", "chown ", "grep ", "find ",
+                "kill ", "killall ", "ps ", "top ", "df ", "du ", "tar ",
+                "curl ", "wget ", "git ", "cd ", "export ", "source ", "unset ",
+                "which ", "man ", "head ", "tail ", "sed ", "awk ", "sort ",
+                "uniq ", "wc ", "xargs ", "dnf ", "apt ", "pip ", "pip3 ",
+                "systemctl ", "service ", "modprobe ", "sensors", "ffmpeg ",
+                "convert ", "xrandr ", "pactl ", "nmcli ", "bluetoothctl ",
+                "dbus-send ", "flatpak ", "snap ", "xdg-open ",
             )
+            stripped = code.strip()
+            is_shell = (
+                any(stripped.startswith(p) for p in _SHELL_PREFIXES)
+                or " | " in code
+                or " && " in code
+                or " || " in code
+                or " ; " in code
+            )
+
+            # Final fallback: if Python's compiler rejects it, treat as shell
+            if not is_shell:
+                try:
+                    compile(code, "<string>", "exec")
+                except SyntaxError:
+                    is_shell = True
+
+            if is_shell:
+                print(f"[ToolExecutor] Running shell command...")
+                # If the command needs sudo and SUDO_PASS is set, pipe it via sudo -S
+                sudo_pass = os.getenv("SUDO_PASS", "")
+                if sudo_pass and "sudo" in code:
+                    # Replace bare `sudo` with `sudo -S` and pipe the password via stdin
+                    patched = code.replace("sudo ", "sudo -S ", 1)
+                    result = subprocess.run(
+                        patched,
+                        shell=True,
+                        input=sudo_pass + "\n",
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                else:
+                    result = subprocess.run(
+                        code,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+            else:
+                print(f"[ToolExecutor] Running Python code...")
+                result = subprocess.run(
+                    ["python3", "-c", code],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+
             output: str = result.stdout or result.stderr or "(no output)"
-            return output[:1000]  # Truncate to 1000 chars
+            return output[:2000]
         except subprocess.TimeoutExpired:
-            return "Error: Code execution timeout (>10 seconds)"
+            return "Error: Execution timeout"
         except Exception as e:
             print(f"[ToolExecutor] Error in _run_code: {e}")
             return f"Code execution error: {e}"
@@ -1000,6 +1061,12 @@ class ToolExecutor:
 
             print(f"[ToolExecutor] Opening application: {app} {args}".strip())
 
+            # Terminal emulators — used to detect when to pass commands via bash -c
+            _TERMINAL_CMDS = {
+                "gnome-terminal", "xterm", "konsole", "alacritty",
+                "kitty", "tilix", "xfce4-terminal", "foot",
+            }
+
             # Common name → command aliases
             aliases: Dict[str, str] = {
                 "spotify": "flatpak run com.spotify.Client",
@@ -1089,6 +1156,12 @@ class ToolExecutor:
                 args_parts = clean_args.split() if clean_args else (args.split() if args else [])
 
             cmd_parts = resolved.split() + args_parts
+
+            # If opening a terminal with shell commands, run them inside it
+            # so the user sees the output in the terminal window.
+            resolved_bin = resolved.split()[0]
+            if resolved_bin in _TERMINAL_CMDS and clean_args and not clean_args.startswith("--"):
+                cmd_parts = [resolved_bin, "--", "bash", "-c", f"{clean_args}; exec bash"]
 
             # 1. Try the resolved/aliased command directly
             try:

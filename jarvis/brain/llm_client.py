@@ -31,10 +31,21 @@ class LLMClient:
         m.strip()
         for m in os.getenv(
             "GROQ_FALLBACK_CHAIN",
-            "qwen/qwen3-32b,openai/gpt-oss-20b,groq/compound-mini,gemma2-9b-it,mixtral-8x7b-32768,llama-3.1-8b-instant",
+            """
+            llama-3.3-70b-versatile,
+            openai/gpt-oss-20b,
+            openai/gpt-oss-120b,
+            groq/compound,
+            meta-llama/llama-prompt-guard-2-22m,
+            meta-llama/llama-prompt-guard-2-86m,
+            meta-llama/llama-4-scout-17b-16e-instruct,
+            llama-3.1-8b-instant,
+            qwen/qwen3-32b,
+            """,
         ).split(",")
         if m.strip()
     ]
+
 
     def __init__(self) -> None:
         api_key = os.getenv("GROQ_API_KEY")
@@ -166,16 +177,15 @@ class LLMClient:
                         return result
                     except Exception as fe:
                         last_error = str(fe)
-                        # Continue chain on rate limits OR "too large" errors
-                        # (next model may accept shorter context).
-                        # Stop only on unrecoverable errors (auth, bad request, etc.)
-                        recoverable = (
-                            "rate_limit_exceeded" in last_error
-                            or "too large" in last_error
-                            or "reduce your message size" in last_error
-                            or "request_too_large" in last_error
-                        )
-                        if not recoverable:
+                        print(f"[LLM] Fallback {fallback} failed: {last_error[:120]}")
+                        # Only stop the chain on auth/credential failures.
+                        # Everything else (model unavailable, unsupported features,
+                        # too large, rate limits) — keep trying the next model.
+                        unrecoverable = any(t in last_error.lower() for t in (
+                            "invalid api key", "invalid_api_key",
+                            "authentication", "unauthorized", "forbidden",
+                        ))
+                        if unrecoverable:
                             break
 
                 # All models exhausted — extract retry time and respond in character
@@ -236,12 +246,16 @@ class LLMClient:
                 return
             except Exception as e:
                 last_error = str(e)
-                if "rate_limit_exceeded" in last_error:
-                    print(f"[LLM] Rate limit on {model}, trying next...")
-                    continue
-                print(f"[LLM] Error in chat_stream: {e}")
-                yield f"Systems error, sir: {e}"
-                return
+                unrecoverable = any(t in last_error.lower() for t in (
+                    "invalid api key", "invalid_api_key",
+                    "authentication", "unauthorized", "forbidden",
+                ))
+                if unrecoverable:
+                    print(f"[LLM] Auth error on {model} — stopping chain.")
+                    yield f"Authentication error, sir. Please check the API key."
+                    return
+                print(f"[LLM] {model} failed: {last_error[:120]} — trying next...")
+                continue
 
         retry_msg = self._parse_retry_time(last_error)
         print(f"[LLM] All streaming models rate-limited. {retry_msg}")

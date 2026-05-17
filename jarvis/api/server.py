@@ -14,6 +14,7 @@ import json
 import base64
 import threading
 import queue
+import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from dotenv import load_dotenv
@@ -176,7 +177,8 @@ async def status() -> Dict[str, Any]:
 
         return {
             "status": "online",
-            "model": "llama3.1:8b",
+            "model": os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
+            "location": os.getenv("LOCATION", "Kigali, Rwanda"),
             "memory_entries": memory.collection.count(),
             "facts_stored": len(memory.get_all_facts()),
             "conversation_turns": len(agent.conversation_history),
@@ -184,6 +186,49 @@ async def status() -> Dict[str, Any]:
         }
     except Exception as e:
         print(f"[API] Error in status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/metrics")
+async def get_metrics() -> Dict[str, Any]:
+    """System hardware metrics — CPU, RAM, disk, network."""
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        disk = psutil.disk_usage('/')
+        net = psutil.net_io_counters()
+
+        cpu_temp = None
+        try:
+            temps = psutil.sensors_temperatures()
+            if temps:
+                for k in ('coretemp', 'k10temp', 'cpu_thermal', 'acpitz'):
+                    if k in temps and temps[k]:
+                        cpu_temp = round(temps[k][0].current, 1)
+                        break
+        except Exception:
+            pass
+
+        return {
+            "cpu_percent": round(cpu, 1),
+            "cpu_count": psutil.cpu_count(logical=True),
+            "mem_percent": round(mem.percent, 1),
+            "mem_used_gb": round(mem.used / 1024**3, 2),
+            "mem_total_gb": round(mem.total / 1024**3, 2),
+            "swap_percent": round(swap.percent, 1),
+            "disk_percent": round(disk.percent, 1),
+            "disk_used_gb": round(disk.used / 1024**3, 1),
+            "disk_total_gb": round(disk.total / 1024**3, 1),
+            "net_sent_bytes": net.bytes_sent,
+            "net_recv_bytes": net.bytes_recv,
+            "cpu_temp": cpu_temp,
+            "uptime": int(time.time() - psutil.boot_time()),
+            "process_count": len(psutil.pids()),
+        }
+    except Exception as e:
+        print(f"[API] Error in get_metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -439,6 +484,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 stream_thread.start()
 
                 loop = asyncio.get_event_loop()
+                full_text: str = ""
+                pre_exec_text: str = ""  # track what was already announced
+
                 while True:
                     item = await loop.run_in_executor(None, chunk_queue.get)
                     if item is None:
@@ -446,32 +494,93 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     if isinstance(item, Exception):
                         await websocket.send_json({"error": str(item), "done": True})
                         break
-                    await websocket.send_json({"chunk": item, "done": False})
+                    full_text += item
 
-                await websocket.send_json({"chunk": "", "done": True})
+                    # First chunk: if it's a short complete sentence it's a pre-execution
+                    # announcement — generate and send its audio immediately so the user
+                    # hears Jarvis speak before the long tool wait begins.
+                    stripped = item.strip()
+                    if not pre_exec_text and stripped.endswith(".") and len(stripped.split()) <= 8:
+                        pre_exec_text = stripped
+                        pre_audio_b64: Optional[str] = None
+                        tts = get_tts()
+                        if tts:
+                            try:
+                                pre_bytes: bytes = await loop.run_in_executor(
+                                    None, tts.generate_audio_bytes, stripped
+                                )
+                                if pre_bytes:
+                                    pre_audio_b64 = base64.b64encode(pre_bytes).decode("utf-8")
+                            except Exception as pre_err:
+                                print(f"[API] Pre-exec TTS error (non-fatal): {pre_err}")
+                        await websocket.send_json({"chunk": item, "done": False, "pre_audio": pre_audio_b64})
+                    else:
+                        await websocket.send_json({"chunk": item, "done": False})
+
+                # Generate final audio — strip the pre-exec part so it isn't repeated
+                final_text: str = full_text.strip()
+                if pre_exec_text and final_text.startswith(pre_exec_text):
+                    final_text = final_text[len(pre_exec_text):].strip()
+
+                # Skip final audio if the pre-exec already announced the action
+                # and the remaining text is just a short confirmation ("Paused.",
+                # "Done.", "Opened chrome, sir." etc.) — speaking both is redundant.
+                # Only generate audio when the final text is a meaningful answer (>5 words).
+                needs_final_audio = final_text and (
+                    not pre_exec_text or len(final_text.split()) > 5
+                )
+
+                audio_b64: Optional[str] = None
+                tts = get_tts()
+                if tts and needs_final_audio:
+                    try:
+                        audio_bytes: bytes = await loop.run_in_executor(
+                            None, tts.generate_audio_bytes, final_text
+                        )
+                        if audio_bytes:
+                            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                    except Exception as tts_err:
+                        print(f"[API] WebSocket TTS error (non-fatal): {tts_err}")
+
+                await websocket.send_json({"chunk": "", "done": True, "audio": audio_b64})
                 print(f"[API] WebSocket response complete")
 
+            except WebSocketDisconnect:
+                return
             except json.JSONDecodeError:
-                await websocket.send_json({
-                    "error": "Invalid JSON",
-                    "done": True
-                })
-            except Exception as e:
+                try:
+                    await websocket.send_json({"error": "Invalid JSON", "done": True})
+                except Exception:
+                    pass
+            except RuntimeError as e:
+                es = str(e).lower()
+                if any(k in es for k in ("shutdown", "closed", "disconnect", "receive")):
+                    print(f"[API] WebSocket connection closed")
+                    return
                 print(f"[API] Error in websocket message loop: {e}")
-                await websocket.send_json({
-                    "error": str(e),
-                    "done": True
-                })
+                try:
+                    await websocket.send_json({"error": str(e), "done": True})
+                except Exception:
+                    pass
+            except Exception as e:
+                es = str(e).lower()
+                if any(k in es for k in ("disconnect", "connection closed", "receive")):
+                    return
+                print(f"[API] Error in websocket message loop: {e}")
+                try:
+                    await websocket.send_json({"error": str(e), "done": True})
+                except Exception:
+                    pass
 
     except WebSocketDisconnect:
         print(f"[API] WebSocket disconnected")
+    except RuntimeError as e:
+        if "shutdown" not in str(e).lower() and "closed" not in str(e).lower():
+            print(f"[API] Error in websocket_chat: {e}")
     except Exception as e:
         print(f"[API] Error in websocket_chat: {e}")
         try:
-            await websocket.send_json({
-                "error": str(e),
-                "done": True
-            })
+            await websocket.send_json({"error": str(e), "done": True})
         except Exception:
             pass
 
