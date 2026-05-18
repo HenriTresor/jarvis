@@ -55,7 +55,6 @@ chroma_db/
 vector_store/
 
 # Audio/Video cache
-*.wav
 *.mp3
 *.mp4
 cache/
