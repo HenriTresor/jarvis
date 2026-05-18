@@ -4,7 +4,6 @@
 # Voice Pipeline (Wake Word, STT, TTS)
 openwakeword
 faster-whisper
-TTS
 piper-tts
 sounddevice
 pyaudio
@@ -23,7 +22,7 @@ requests
 python-dotenv
 
 # Vision (Image Analysis, Motion Detection)
-opencv-python
+opencv-python-headless
 Pillow
 
 # API Backend (FastAPI + WebSocket)

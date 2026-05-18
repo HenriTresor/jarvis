@@ -30,14 +30,26 @@ class _XTTSEngine:
     DEFAULT_SPEAKER = "Ana Florence"
 
     def __init__(self, speaker_wav: Optional[str] = None) -> None:
-        import torch
+        try:
+            import torch
+        except ImportError:
+            raise RuntimeError(
+                "Coqui XTTS requires PyTorch. "
+                "Install it with: pip install -r requirements.xtts.txt"
+            )
         _orig = torch.load
         def _patched(*a, **kw):
             kw.setdefault("weights_only", False)
             return _orig(*a, **kw)
         torch.load = _patched
 
-        from TTS.api import TTS
+        try:
+            from TTS.api import TTS
+        except ImportError:
+            raise RuntimeError(
+                "Coqui TTS package not installed. "
+                "Install it with: pip install -r requirements.xtts.txt"
+            )
         print("[TTS] Loading Coqui XTTS v2...")
         print("[TTS] (First run may take 2-5 minutes to download model)")
         self.tts = TTS(self.MODEL_NAME)
