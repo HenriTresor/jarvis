@@ -1,0 +1,23 @@
+services:
+  jarvis:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Persistent memory (ChromaDB + SQLite facts)
+      - jarvis_memory:/app/jarvis_memory
+      # Model caches — downloaded once, reused across restarts
+      - model_cache_hf:/root/.cache/huggingface
+      - model_cache_piper:/root/.local/share/piper
+      - model_cache_whisper:/root/.cache/faster_whisper
+      - model_cache_oww:/root/.cache/openwakeword
+
+volumes:
+  jarvis_memory:
+  model_cache_hf:
+  model_cache_piper:
+  model_cache_whisper:
+  model_cache_oww:

@@ -1,208 +1,191 @@
-# J.A.R.V.I.S. - Just A Rather Very Intelligent System
+# J.A.R.V.I.S.
 
-A complete local AI assistant built with Python, featuring voice interaction, multimodal vision, web search, and smart home integration. No API keys required - everything runs locally on your machine.
+A personal AI assistant with a web UI, voice interaction, memory, tool calling, and smart home integration. Powered by Groq cloud inference with multi-provider fallback (Cerebras, Gemini).
 
-## Features
+---
 
-### 🎤 Voice Pipeline
-- **Wake Word Detection**: Responds to "Hey Jarvis" using OpenWakeWord
-- **Speech-to-Text**: Real-time transcription with faster-whisper
-- **Text-to-Speech**: Natural voice synthesis with Coqui XTTS v2
+## Quick Start (Docker)
 
-### 🧠 Brain & Memory
-- **Local LLM**: Powered by Ollama + Llama 3.1 8B (8GB RAM required)
-- **Two-Layer Memory**: Vector storage for conversations + structured facts
-- **Context Awareness**: Remembers previous interactions and user preferences
+**Prerequisites:** Docker + Docker Compose installed on Linux.
 
-### 🔧 Agent & Tools
-- **Tool Calling**: 15+ built-in tools (web search, weather, file operations, etc.)
-- **Smart Home**: Home Assistant integration for device control
-- **Code Execution**: Run Python code and shell commands safely
+### 1. Clone and configure
 
-### 👁️ Vision & Multimodal
-- **Image Analysis**: Describe photos and analyze visual content with LLaVA
-- **Camera Integration**: Real-time environment monitoring
-- **OCR Support**: Extract text from images
-
-### 🌐 API Backend
-- **REST API**: Full HTTP endpoints for all functionality
-- **WebSocket Streaming**: Real-time chat with streaming responses
-- **Frontend Ready**: Easy integration with web/mobile apps
-
-## Quick Start
-
-### 1. Install Dependencies
 ```bash
-pip install -r requirements.txt
+git clone <repo-url>
+cd jarvis
+cp .env.example .env
 ```
 
-### 2. Install Ollama & Models
-```bash
-# Install Ollama (https://ollama.ai)
-curl -fsSL https://ollama.ai/install.sh | sh
+Open `.env` and add at minimum your Groq API key:
 
-# Pull required models
-ollama pull llama3.1:8b          # Main LLM (8GB RAM)
-ollama pull llava:7b             # Vision model (4GB RAM)
+```env
+GROQ_API_KEY=gsk_...        # required — get one free at console.groq.com
+GEMINI_API_KEY=...           # optional fallback — aistudio.google.com (1M tokens/day free)
+CEREBRAS_API_KEY=...         # optional fallback — cloud.cerebras.ai (free tier)
 ```
 
-### 3. Run J.A.R.V.I.S.
+### 2. Start
+
 ```bash
-# Text mode (testing)
-python run.py --mode text
-
-# Voice mode (full assistant)
-python run.py --mode voice --location "New York, USA"
-
-# API mode (for frontend)
-python run.py --mode api
+docker compose up -d
 ```
+
+Open **http://localhost:8000** in your browser. That's it.
+
+### 3. Stop
+
+```bash
+docker compose down
+```
+
+Memory and model caches are stored in Docker named volumes — they persist across restarts and rebuilds.
+
+---
+
+## Voice Mode (Linux)
+
+Voice mode routes audio through PulseAudio/PipeWire on the host.
+
+```bash
+# Find your microphone device index
+python3 -c "import sounddevice as sd; print(sd.query_devices())"
+
+# Add to .env
+STT_DEVICE=<index>
+
+# Start with voice overlay
+docker compose -f docker-compose.yml -f docker-compose.voice.yml up -d
+```
+
+Requires PulseAudio or PipeWire running on the host (standard on any modern Linux desktop).
+
+---
 
 ## Configuration
 
-### Command Line Options
-- `--mode`: `text`, `voice`, or `api`
-- `--location`: Your location for weather (e.g., "New York, USA")
-- `--ha-url`: Home Assistant URL (optional)
-- `--ha-token`: Home Assistant access token (optional)
+All configuration is via `.env`. See `.env.example` for the full reference.
 
-### Environment Variables
-Create a `.env` file for sensitive data:
+| Variable | Default | Description |
+|---|---|---|
+| `GROQ_API_KEY` | — | **Required.** Groq API key |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Primary LLM model |
+| `CEREBRAS_API_KEY` | — | Optional fallback provider |
+| `GEMINI_API_KEY` | — | Optional fallback provider |
+| `TTS_ENGINE` | `piper` | `piper` (fast, local) or `xtts` (voice cloning) |
+| `PIPER_VOICE` | `en_GB-alan-medium` | Piper voice name |
+| `SPEAKER_WAV` | — | 6-second WAV for XTTS voice cloning |
+| `STT_DEVICE` | `0` | Microphone device index |
+| `SPEECH_SPEED` | `1.05` | TTS playback speed multiplier |
+| `GMAIL_USER` | — | Gmail address for email tools |
+| `GMAIL_APP_PASSWORD` | — | Gmail App Password (not your account password) |
+| `SUDO_PASSWORD` | — | Used by system control tools |
+| `HOME_ASSISTANT_URL` | — | Home Assistant base URL |
+| `HOME_ASSISTANT_TOKEN` | — | Home Assistant long-lived token |
+| `LOCATION` | `Kigali, Rwanda` | Injected into system prompt |
+
+---
+
+## Running Without Docker
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# edit .env with your keys
+
+python run.py --mode api     # web UI only
+python run.py --mode text    # terminal chat
+python run.py --mode voice   # full voice pipeline
 ```
-OPENWEATHER_API_KEY=your_key_here
-HOME_ASSISTANT_URL=http://localhost:8123
-HOME_ASSISTANT_TOKEN=your_token_here
+
+---
+
+## LLM Fallback Chain
+
+When a model is rate-limited, Jarvis automatically tries the next one:
+
 ```
+Groq llama-3.3-70b  →  Groq qwen3-32b  →  Groq llama-4-scout
+→  Cerebras qwen-3-235b  →  Gemini 2.5-flash  →  Gemini 2.0-flash
+```
+
+All providers have free tiers. Adding more keys = more headroom before hitting limits.
+
+---
+
+## Tools
+
+| Tool | Description |
+|---|---|
+| `web_search` | DuckDuckGo search |
+| `get_weather` | Current weather by city |
+| `open_application` | Launch desktop apps |
+| `run_code` | Execute Python or shell commands |
+| `spotify_control` | Play, pause, skip, volume |
+| `system_volume` | Mute, unmute, set volume |
+| `smart_home_control` | Home Assistant device control |
+| `send_email` | Send Gmail (requires App Password) |
+| `get_unread_emails` | Read inbox via IMAP |
+| `create_calendar_event` | Add to local calendar |
+| `get_upcoming_events` | List upcoming events |
+| `set_alarm` | Desktop alarm (fires even if UI is closed) |
+| `capture_image` | Webcam snapshot |
+| `describe_image` | Vision analysis via LLaVA |
+| `get_datetime` | Current time and date |
+| `remember_fact` / `recall_fact` | Persistent key-value memory |
+
+---
 
 ## Architecture
 
 ```
+User (voice or web UI)
+  → MemoryManager.build_context()     — retrieves past conversations + facts
+  → JarvisAgent.think()               — ReAct loop (up to 8 iterations)
+      LLMClient.chat()  →  tool_calls?  →  ToolExecutor.execute()
+  → final response
+  → MemoryManager.save_conversation()
+  → TextToSpeech.speak()              — voice mode only
+```
+
+```
 jarvis/
-├── voice/           # Voice pipeline components
-│   ├── wake_word.py # Wake word detection
-│   ├── stt.py       # Speech-to-text
-│   ├── tts.py       # Text-to-speech
-│   └── pipeline.py  # Voice orchestration
-├── brain/           # LLM and prompts
-│   ├── llm_client.py
-│   └── prompts.py
-├── memory/          # Vector + structured storage
-│   └── manager.py
-├── agent/           # ReAct agent loop
-│   ├── agent.py
-│   ├── tools.py
-│   └── tool_executor.py
-├── vision/          # Computer vision
-│   └── vision_module.py
-├── api/             # FastAPI backend
-│   └── server.py
-└── run.py          # Main entry point
+├── api/           server.py          FastAPI + WebSocket
+├── agent/         agent.py           ReAct loop
+│                  tools.py           Tool schemas (OpenAI format)
+│                  tool_executor.py   Tool implementations
+├── brain/         llm_client.py      Multi-provider LLM client
+│                  prompts.py         System prompt
+├── memory/        manager.py         ChromaDB (vector) + SQLite (facts)
+├── voice/         pipeline.py        Voice orchestration
+│                  wake_word.py       "Hey Jarvis" detection
+│                  stt.py             faster-whisper transcription
+│                  tts.py             Piper / XTTS synthesis
+├── vision/        vision_module.py   Webcam + LLaVA analysis
+└── ui/            index.html         Web frontend
 ```
-
-## API Endpoints
-
-### REST API
-- `GET /health` - Health check
-- `POST /chat` - Text chat
-- `POST /voice/chat` - Voice interaction
-- `GET /memory` - Retrieve memories
-- `POST /vision/analyze` - Analyze image
-
-### WebSocket
-- `ws://localhost:8000/ws/chat` - Streaming chat
-
-## Tool Capabilities
-
-J.A.R.V.I.S. can perform these actions:
-
-1. **Web Search**: DuckDuckGo search with summaries
-2. **Weather**: Current conditions and forecasts
-3. **File Operations**: Read/write files, list directories
-4. **Code Execution**: Run Python/shell commands
-5. **Home Assistant**: Control smart home devices
-6. **Vision**: Analyze images and camera feed
-7. **Memory**: Store and recall facts
-8. **Time/Date**: Current time and calendar
-9. **Calculator**: Mathematical computations
-10. **System Info**: Hardware and OS details
-
-## Hardware Requirements
-
-- **RAM**: 16GB minimum (24GB recommended)
-- **Storage**: 20GB free space for models
-- **Microphone**: For voice input
-- **Speakers/Headphones**: For voice output
-- **Camera**: Optional for vision features
-
-## Troubleshooting
-
-### Common Issues
-
-**Ollama not found**
-```bash
-# Check if Ollama is running
-ollama list
-
-# Start Ollama service
-ollama serve
-```
-
-**Audio device errors**
-```bash
-# List available audio devices
-python -c "import sounddevice as sd; print(sd.query_devices())"
-```
-
-**Memory issues**
-- Reduce ChromaDB collection size in memory/manager.py
-- Use smaller LLM models if RAM is limited
-
-### Logs
-All components use prefixed logging:
-- `[WakeWord]`: Wake word detection
-- `[STT]`: Speech-to-text
-- `[TTS]`: Text-to-speech
-- `[Agent]`: Agent reasoning
-- `[Run]`: Main application
-
-## Development
-
-### Testing
-```bash
-# Test individual components
-python -c "from jarvis.brain.llm_client import LLMClient; print('LLM OK')"
-
-# Run API server for testing
-python run.py --mode api
-```
-
-### Extending J.A.R.V.I.S.
-
-**Add new tools**:
-1. Define tool schema in `jarvis/agent/tools.py`
-2. Implement in `jarvis/agent/tool_executor.py`
-3. Add to agent prompt if needed
-
-**Add new voice features**:
-1. Extend `jarvis/voice/` modules
-2. Update `jarvis/voice/pipeline.py`
-
-**Add new API endpoints**:
-1. Add routes in `jarvis/api/server.py`
-2. Update OpenAPI documentation
-
-## License
-
-MIT License - feel free to modify and distribute.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
 
 ---
 
-**Built with ❤️ using Python 3.8+**
+## Adding a Tool
+
+1. Add schema to `jarvis/agent/tools.py` (OpenAI function-calling format)
+2. Add handler method + register in `jarvis/agent/tool_executor.py`
+3. Done — the agent picks it up automatically
+
+---
+
+## API
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Web UI |
+| `GET` | `/status` | Health check + memory stats |
+| `POST` | `/chat` | Synchronous chat (full ReAct loop) |
+| `POST` | `/chat/audio` | Chat + base64 WAV audio response |
+| `WS` | `/ws/chat` | Streaming chat (token-by-token) |
+| `GET` | `/memory/facts` | Read stored facts |
+| `POST` | `/memory/facts` | Write a fact |
+| `GET` | `/memory/search?q=` | Semantic search over history |

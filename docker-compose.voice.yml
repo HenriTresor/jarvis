@@ -1,0 +1,21 @@
+# Voice mode override — adds audio hardware passthrough for Linux (PulseAudio/PipeWire).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.voice.yml up
+#
+# Requires PulseAudio or PipeWire running on the host.
+# Find your audio device index first:
+#   python3 -c "import sounddevice as sd; print(sd.query_devices())"
+# Then set STT_DEVICE in your .env.
+
+services:
+  jarvis:
+    command: python run.py --mode voice
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+    volumes:
+      - /run/user/1000/pulse/native:/run/user/1000/pulse/native
+      # Optional: voice cloning WAV
+      - ./jarvis_voice.wav:/app/jarvis_voice.wav:ro
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - audio

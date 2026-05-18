@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.git/
+.gitignore
+jarvis_memory/
+*.md
+*.jsonl
+IMPLEMENTATION.md

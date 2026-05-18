@@ -125,7 +125,7 @@ class TextToSpeech:
     def __init__(self, speaker_wav: Optional[str] = None) -> None:
         engine = os.getenv("TTS_ENGINE", "xtts").lower()
         speaker_wav = speaker_wav or os.getenv("SPEAKER_WAV") or None
-        self.speed = float(os.getenv("SPEECH_SPEED", "1.22"))
+        self.speed = float(os.getenv("SPEECH_SPEED", "1.05"))
 
         if engine == "piper":
             voice = os.getenv("PIPER_VOICE", "en_GB-alan-medium")
