@@ -6,6 +6,5 @@ __pycache__/
 .git/
 .gitignore
 jarvis_memory/
-*.md
 *.jsonl
 IMPLEMENTATION.md

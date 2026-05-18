@@ -1,0 +1,8 @@
+# Optional: Coqui XTTS voice cloning engine
+# Pulls in PyTorch (~2GB) — only install if you need voice cloning.
+# Set TTS_ENGINE=xtts and SPEAKER_WAV=./jarvis_voice.wav to use.
+#
+# Install: pip install -r requirements.xtts.txt
+# Docker:  uncomment the RUN line in Dockerfile
+
+TTS
