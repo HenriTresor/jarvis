@@ -22,6 +22,21 @@ def _strip_thinking(text: str) -> str:
     return text.strip()
 
 
+def _strip_verbalized_tool_calls(text: str) -> str:
+    """Remove raw tool-call syntax a model may leak into its text response.
+
+    Matches patterns like: tool_name(key="val", ...) or tool_name({"key":"val"})
+    that appear as the entire response or as a standalone line.
+    """
+    # Full response is just a function call expression — drop it entirely.
+    if re.fullmatch(r'\w+\s*\(.*\)\s*', text, re.DOTALL):
+        return ""
+    # Strip any line that looks like a bare function call.
+    lines = text.splitlines()
+    cleaned = [l for l in lines if not re.fullmatch(r'\s*\w+\s*\(.*\)\s*', l)]
+    return "\n".join(cleaned).strip()
+
+
 def _extract_tool_calls(msg) -> Optional[List[Dict[str, Any]]]:
     if not msg.tool_calls:
         return None
@@ -152,6 +167,7 @@ class LLMClient:
             or "reduce your message size" in e
             or "not supported" in e
             or "failed to template" in e
+            or "tool call validation failed" in e
             or "404" in err
         )
 
@@ -167,7 +183,8 @@ class LLMClient:
         print(f"[LLM] Trimmed history to last 6 messages for {label}.")
 
     def _build_result(self, msg, model: str) -> Dict[str, Any]:
-        result: Dict[str, Any] = {"content": _strip_thinking(msg.content or ""), "model": model}
+        content = _strip_verbalized_tool_calls(_strip_thinking(msg.content or ""))
+        result: Dict[str, Any] = {"content": content, "model": model}
         tcs = _extract_tool_calls(msg)
         if tcs:
             result["tool_calls"] = tcs
@@ -223,11 +240,13 @@ class LLMClient:
                     print(f"[LLM] Request too large for {model}. Trimming and trying next...")
                     self._trim_messages(kwargs, model)
                 else:
-                    print(f"[LLM] {model} error: {last_error[:100]}. Trying next...")
+                    if self._is_retryable(last_error):
+                        print(f"[LLM] {model} error — trying next model...")
+                    else:
+                        print(f"[LLM] Non-retryable error from {model}: {last_error[:100]}")
                 if self._is_unrecoverable(last_error):
                     break
                 if not self._is_retryable(last_error):
-                    print(f"[LLM] Non-retryable error from Groq: {last_error[:120]}")
                     break
 
         # ── Alternative providers ─────────────────────────────────────────────
